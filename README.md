@@ -3,7 +3,7 @@
 This repository contains a series of scripts designed to extract environmental variables, process 4D netCDF data, fit Boosted Regression Tree (BRT) models, predict egg case bycatch occurrence and abundance, identify Potential Spawning Areas (PSAs) and estimate total bycatch in overlap with fishing effort.
 
 If you use this repository, please cite it using the following DOI:
-[![DOI](https://zenodo.org/...)](https://zenodo.org/doi/...)
+[![DOI](https://zenodo.org/badge/930585604.svg)](https://doi.org/10.5281/zenodo.14847186)
 
 ### Available Scripts:
 *1_prep_df*: Organizes and prepares data for analysis.
