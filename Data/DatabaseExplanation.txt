@@ -1,0 +1,60 @@
+# Predicting Potential Spawning Areas: a novel framework for elasmobranch conservation and spatial management
+
+David Ruiz-García, Claudio Barría, Ana I. Colmenero, Juan A. Raga, David March
+
+The present database was used to fit the boosted regression trees models presented in this scientific article. 
+
+This database contains information on:
+
+(1) The relative identification of tow studied, including:
+
+Column code     Full name 						Units
+
+towN	identification number given to each tow analysed	ranging from 1 to 194	
+
+genus	Scientific name of the studied genus			Scyliorhinus, Raja
+
+date	Date when the tow occurred		ranging from 18-06-2020 to 27-01-2022
+
+
+
+(2) Occurrence and abundance of egg cases:
+
+Column code     Full name				               Units
+
+presence        presence or absence of egg cases                0==absence; 1==presence
+
+N	        Number of egg cases captured            	ranging from 0-110
+
+N_km2           Number of egg cases per trawled area            ranging from 0 to 934
+
+
+
+(3) Environmental and fishing operation predictors considered into the modelling approach.
+
+Column code     Full name						Units
+
+BAT		Tow depth						meters
+	
+SLP             Slope of the sea bed                                    º
+
+RGH             Roughness of the sea bed                                meters
+
+SUB             Substrate of the sea bed                                Folk 5 categories
+
+TFE             Trawl fishing effort                                    h
+
+TEM		Sea bottom temperature					ºC
+
+SAL             Sea bottom salinity                                     psu
+
+NIT             Sea bottom concentration of nitrates                    mmol/m3
+
+PHO             Sea bottom concentration of phosphates                  mmol/m3
+
+EKE             Sea bottom eddy kinetic energy                          m2/s2
+
+
+
+
+
