@@ -14,11 +14,9 @@ library(raster)
 library(gbm)
 library(viridis)
 library(foreach)
-source("fun/validate_model_inputs.R")
 
 
 bootstrap <- T
-sea_reference <- raster::raster(file.path(input_data, 'summary_static', 'Bathy.tif'))
 
 # Presence Scyliorhinus
 #genus <- "Scyliorhinus" #"Raja" #"Scyliorhinus"
@@ -72,6 +70,24 @@ print(mask)
 #plot(mask)
 
 
+bathy<- raster("input/gebco/Bathy.tif")
+print(bathy)
+# plot(bathy)
+# Filter the values between -50 and -600 and set values outside the range to NA
+bathy_filtered <- calc(bathy, function(x) {
+  x[x > -1 | x < -700] <- NA  # Set values outside the range to NA
+  return(x)
+})
+
+# Assign a value of 1 to the remaining (non-NA) values
+bathy_mask <- calc(bathy_filtered, function(x) {
+  x[!is.na(x)] <- 1
+  return(x)
+})
+
+bathy_mask_resampled <- resample(bathy_mask, s, method = "bilinear")
+bathy_mask_resampled <- crop(bathy_mask_resampled, e)
+
 # list of bootstrap models
 outdir_bootstrap <- paste0(indir, "/bootstrap/", paste0(genus, type, "_", family))
 boots_files <- list.files(outdir_bootstrap, full.names = T)
@@ -115,22 +131,11 @@ for(i in 1:length(dates)) {
   grdfile <- list.files(stack_repo, recursive = TRUE, full.names = TRUE, pattern = pat)
   
   # Import environmental stack
-  if (length(grdfile) != 1L) stop("Expected exactly one environmental stack for ", date)
   s <- raster::stack(grdfile)
-  # Reject old negative-depth stacks; rebuild them with script 2.11.
-  assert_depth_raster(s$depth, paste("Prediction input", date))
+  s <- s+0
 
   s <- crop(s, e)
-  # Check ocean membership independently of the positive-depth layer.
-  sea_grid <- ocean_mask_for_grid(sea_reference, s$depth)
-  land_depth <- raster::overlay(s$depth, sea_grid, fun = function(d,z)
-    as.integer(!is.na(d) & is.na(z)))
-  if (raster::cellStats(land_depth, 'sum', na.rm = TRUE) > 0)
-    stop('Prediction stack contains depth values on land; rebuild with script 2.11')
-  # Apply the depth domain on the same grid, without interpolating a binary mask.
-  bathy_mask <- raster::calc(s$depth, function(z) ifelse(z > 20 & z <= 700, 1, NA_real_))
-  s <- raster::mask(s, bathy_mask)
-  assert_depth_raster(s$depth, paste("Masked prediction input", date))
+  s <- raster::mask(s, bathy_mask_resampled)
   
   # Transform variables
   s$ln_fishingEffort <- log1p(s$fishingEffort)

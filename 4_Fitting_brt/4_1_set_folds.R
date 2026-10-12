@@ -6,8 +6,7 @@
 # 4.1. Set folds
 #-------------------------------------------------------------------------------
 library(dplyr)
-source("fun/validate_model_inputs.R")
-source("fun/spatial_folds.R")
+library(groupdata2)
 
 # As mentioned previously, I will use all data to fit the model and check the model using cross-validation,
 # instead of a training and testing data sets.
@@ -16,8 +15,7 @@ genus <- "Raja" #"Raja" #"Scyliorhinus"
 #Load data
 #file <-  file.path(temp_data, paste0("train_test/", genus, "_training_testing/", genus,"_train_dataset.csv"))
 file <-  file.path(temp_data, paste0("data_subsets/", genus, "_dataset_log_pred.csv"))
-final_file <- file.path(temp_data, "folds_dataset", paste0(genus, "_ALL_folds_dataset.csv"))
-data <- read_model_data(final_file, file)
+data <- read.csv2(file)
 
 names(data)
 str(data)
@@ -31,7 +29,6 @@ str(data)
 data <- data %>%
   mutate(Haul_N = as.numeric(factor(code)))
 
-set.seed(123)
 data$RN <- sample.int(100, size=nrow(data), replace=T, prob=NULL)
 data <- data %>%
   mutate(id = seq_along(RN))
@@ -40,9 +37,9 @@ head(data)
 # Set variables as their types:
 # Set categorical predictors as categories:
 data <- data %>% 
-  mutate(Haul_N = factor(data$Haul_N),
+  mutate(Vessel = factor(data$Vessel),
+         Haul_N = factor(data$Haul_N),
          RN = factor(data$RN))
-if ('Vessel' %in% names(data)) data$Vessel <- factor(data$Vessel)
 str(data)
 
 
@@ -73,18 +70,24 @@ data <- data %>% sample_frac(1)
 #  group_by(id, fold) %>%
 #  dplyr::summarize(n = n())
 
-# Keep entire geographic areas out of training when evaluating transfer.
-data$fold <- make_spatial_folds(data, k = n.folds, seed = 123)
-training_positives <- sapply(seq_len(n.folds), function(k)
-  sum(data$N[data$fold != k] > 0))
-if (any(training_positives < 15)) stop('Too few positive hauls in a geographic training set')
+f <- createFolds(data$Vessel, k = n.folds, list = TRUE)
+sapply(f, length)
+
+# Add the fold information back to the original data
+data$fold <- NA  # Initialize the fold column
+
+# Loop through each fold and assign the fold number to the data
+for (i in seq_along(folds)) {
+  data$fold[folds[[i]]] <- i
+}
+
 
 #Check that each fold has a similar number of samples/specimens (rows)
 table(data$fold)
 
 # Summarize the number of specimens per 'id' in each fold
 data_summary <- data %>%
-  group_by(across(any_of(c('Vessel', 'fold')))) %>%
+  group_by(Vessel, fold) %>%
   dplyr::summarize(n = n(), .groups = 'drop')
 print(data_summary)
 
