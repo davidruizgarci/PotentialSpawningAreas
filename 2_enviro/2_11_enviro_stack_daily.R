@@ -15,6 +15,12 @@ library(ncdf4)
 library(stringr)
 library(beepr)
 
+# Load the code helper while retaining the original data working directory.
+# Set code_dir in the laptop-only 0_setup.R before sourcing this script.
+if (!exists("code_dir")) stop("Run the local 0_setup.R to set code_dir first")
+source(file.path(code_dir, "fun", "prediction_checks.R"))
+
+
 # 1. Set static data repository -------------------------------------------------------
 # path to environmental static data
 static_data <- paste0(input_data, "/summary_static/")
@@ -41,7 +47,11 @@ m[] <- 1
 # 3. Stack static environmental data-------------------------------------------
 # import static maps
 depth <- raster(paste0(static_data, "/bathy.tif"))  # bathymetry
-depth <- depth+0
+# The source stores signed elevation; models use positive ocean depth in metres.
+# Retain the source to identify land independently on the final grid.
+signed_elevation <- depth
+depth <- raster::calc(depth, ocean_depth)
+check_ocean_depth(depth, "Static depth before stacking")
 
 slope <- raster(paste0(static_data, "/slope.tif"))  # slope
 slope <- slope+0
@@ -100,6 +110,7 @@ prepareStackForDay <- function(day_folder, variables, res, e, output_folder) {
   
   # Create an empty stack
   stack_dynamic <- stack()
+  target_raster <- NULL
   
   # Mapping of original variable names to new names
   variable_names_map <- list(
@@ -109,6 +120,7 @@ prepareStackForDay <- function(day_folder, variables, res, e, output_folder) {
     so = "bottom_so",
     po4 = "bottom_po4",
     uo = "bottom_uo",
+    vo = "bottom_vo",
     eke = "bottom_eke"
   )
   
@@ -116,7 +128,7 @@ prepareStackForDay <- function(day_folder, variables, res, e, output_folder) {
   # example to test code: variable <- variables[2]
     
     # Construct the file pattern for the variable
-    file_pattern <- paste0("*_", variable, "_3d.nc")
+    file_pattern <- paste0("_", variable, "_3d\\.nc$")
     
     # List netCDF files for the given variable
     nc_files <- list.files(path = day_folder, pattern = file_pattern, full.names = TRUE)
@@ -159,6 +171,9 @@ prepareStackForDay <- function(day_folder, variables, res, e, output_folder) {
     }
   }
   
+  # Stop explicitly if no environmental file created a daily target grid.
+  if (is.null(target_raster)) stop("No dynamic environmental files in ", day_folder)
+
   # Now add the static layers once, resampled to the same resolution as the dynamic stack
   if (!is.null(stack_static)) {
     
@@ -175,22 +190,34 @@ prepareStackForDay <- function(day_folder, variables, res, e, output_folder) {
   
   # Save the final stack to file
   if (nlayers(stack_final) > 0) {
-    # Extract the base directory and split by '/'
-    components <- unlist(strsplit(day_folder, "/"))
-    
-    # Assumes that folder structure includes year, month, day in the specified positions
-    year <- components[3]
-    month <- components[4]
-    day <- components[5]
-    
+    # Read date components from the final folders, also with an absolute data path.
+    year <- basename(dirname(dirname(day_folder)))
+    month <- basename(dirname(day_folder))
+    day <- basename(day_folder)
+
     # Create a date string for the file name
     date_string <- paste0(year, month, day)
     
     # Define the output file path
     output_file <- file.path(output_folder, paste0("stack_", date_string, ".grd"))
     
-    # Save the final stack
+    # Keep ocean membership independent of interpolated depth at coastal cells.
+    ocean <- ocean_on_grid(signed_elevation, stack_final$depth)
+    stack_final <- raster::mask(stack_final, ocean)
+    check_ocean_depth(stack_final$depth, paste("Stack", date_string))
+
+    # Preserve the previous raster pair before regenerating an existing stack.
+    previous_files <- c(output_file, sub("[.]grd$", ".gri", output_file))
+    stamp <- format(Sys.time(), "%Y%m%d_%H%M%S")
+    for (previous in previous_files[file.exists(previous_files)]) {
+      if (!file.copy(previous, paste0(previous, ".before_depth_fix_", stamp), overwrite = FALSE)) {
+        stop("Could not back up ", previous)
+      }
+    }
+
+    # Check the saved file as well, without changing the original grid or filenames.
     writeRaster(stack_final, output_file, format = "raster", overwrite = TRUE)
+    check_ocean_depth(raster::stack(output_file)$depth, paste("Saved stack", date_string))
     
     cat("Stack saved to", output_file, "\n")
   }

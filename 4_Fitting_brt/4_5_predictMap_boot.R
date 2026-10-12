@@ -15,6 +15,13 @@ library(gbm)
 library(viridis)
 library(foreach)
 
+# Load the code helper while retaining the original data working directory.
+# Set code_dir in the laptop-only 0_setup.R before sourcing this script.
+if (!exists("code_dir")) stop("Run the local 0_setup.R to set code_dir first")
+source(file.path(code_dir, "fun", "prediction_checks.R"))
+source(file.path(code_dir, "fun", "training_smearing.R"))
+
+
 
 bootstrap <- T
 
@@ -39,12 +46,76 @@ bootstrap <- T
 # mod_code <- "brt"
 
 # Density Scyiorhinus:
- genus <- "Raja" 
- family <- "LN_gaussian_Final2" 
- type <- "_NKm2" 
- mod_code <- "brt"
- dataset <- "ALL" 
+# genus <- "Raja" 
+# family <- "LN_gaussian_Final2" 
+# type <- "_NKm2" 
+# mod_code <- "brt"
+# dataset <- "ALL" 
 
+ # Select the prediction to run --------------------------------------------------
+ 
+ # Available cases:
+ # "Raja_abundance"
+ # "Raja_presence"
+ # "Scyliorhinus_abundance"
+ # "Scyliorhinus_presence"
+ 
+ prediction_case <- "Raja_abundance"
+ 
+ 
+ # Retrieve the original model folder parameters --------------------------------
+ 
+ prediction_options <- list(
+   
+   Raja_abundance = list(
+     genus  = "Raja",
+     family = "LN_gaussian_Final2",
+     type   = "_NKm2"
+   ),
+   
+   Raja_presence = list(
+     genus  = "Raja",
+     family = "bernuilli_Final2",
+     type   = "_PA"
+   ),
+   
+   Scyliorhinus_abundance = list(
+     genus  = "Scyliorhinus",
+     family = "gaussian_Final2",
+     type   = "_PA"  # Historical folder name for the abundance models.
+   ),
+   
+   Scyliorhinus_presence = list(
+     genus  = "Scyliorhinus",
+     family = "bernuilli_Final2",
+     type   = "_PA"
+   )
+ )
+ 
+ 
+ # Check the selection and assign the parameters --------------------------------
+ 
+ if (!prediction_case %in% names(prediction_options)) {
+   stop(
+     "Unknown prediction_case. Choose one of: ",
+     paste(names(prediction_options), collapse = ", ")
+   )
+ }
+ 
+ selected_prediction <- prediction_options[[prediction_case]]
+ 
+ genus  <- selected_prediction$genus
+ family <- selected_prediction$family
+ type   <- selected_prediction$type
+ 
+ 
+ # Retain the original shared settings ------------------------------------------
+ 
+ mod_code  <- "brt"
+ dataset   <- "ALL"
+ bootstrap <- TRUE
+ 
+ message("Running prediction: ", prediction_case)
 
 # 1. Set data repository--------------------------------------------------------
 indir <- paste(output_data, mod_code, paste0(genus, type, "_", family), sep="/")
@@ -70,23 +141,9 @@ print(mask)
 #plot(mask)
 
 
-bathy<- raster("input/gebco/Bathy.tif")
-print(bathy)
-# plot(bathy)
-# Filter the values between -50 and -600 and set values outside the range to NA
-bathy_filtered <- calc(bathy, function(x) {
-  x[x > -1 | x < -700] <- NA  # Set values outside the range to NA
-  return(x)
-})
+# Use the SAME signed source as the stack builder for the independent ocean mask.
+signed_elevation <- raster(file.path(input_data, "summary_static", "bathy.tif"))
 
-# Assign a value of 1 to the remaining (non-NA) values
-bathy_mask <- calc(bathy_filtered, function(x) {
-  x[!is.na(x)] <- 1
-  return(x)
-})
-
-bathy_mask_resampled <- resample(bathy_mask, s, method = "bilinear")
-bathy_mask_resampled <- crop(bathy_mask_resampled, e)
 
 # list of bootstrap models
 outdir_bootstrap <- paste0(indir, "/bootstrap/", paste0(genus, type, "_", family))
@@ -96,6 +153,22 @@ boots_files <- list.files(outdir_bootstrap, full.names = T)
 brt_models <- lapply(boots_files, readRDS)
 print(brt_models[1])
 brt_models <- brt_models[1:100]
+
+# Estimate the approved training-residual correction once per existing model.
+# Occurrence models retain their probability scale and need no log correction.
+distributions <- vapply(brt_models, function(model) model$distribution$name, character(1))
+if (length(unique(distributions)) != 1L || !distributions[1] %in% c("gaussian", "bernoulli")) {
+  stop("Expected one consistent Gaussian or Bernoulli bootstrap ensemble")
+}
+positive_component <- distributions[1] == "gaussian"
+smearing <- if (positive_component) vapply(brt_models, training_smearing, numeric(1)) else rep(1, length(brt_models))
+prediction_units <- if (positive_component) "capsules/km2" else "probability"
+
+# Keep the factors and source-model fingerprints separate from the saved models.
+write.csv(data.frame(model_file = boots_files[1:100],
+                     model_md5 = unname(tools::md5sum(boots_files[1:100])),
+                     smearing = smearing),
+          file.path(outdir, "training_smearing_factors.csv"), row.names = FALSE)
 
 # Prepare cluster
 # cores <-detectCores() #if you use all of them you, your computer may crash (consumes all the CPU).
@@ -125,17 +198,28 @@ for(i in 1:length(dates)) {
   DD <- sprintf("%02d", day(date))
   
   # Locate file
-  pat <- paste0( "stack_", format(date, "%Y%m%d"), ".grd")
+  # Match only the environmental stack, excluding backup files.
+  pat <- paste0("^stack_", format(date, "%Y%m%d"), "\\.grd$")
+  
   # Get list of all month folders
   stack_repo <- paste0("input/cmems_predict_3d/2021/", MM, "/", DD)
   grdfile <- list.files(stack_repo, recursive = TRUE, full.names = TRUE, pattern = pat)
   
   # Import environmental stack
+  if (length(grdfile) != 1L) stop("Expected one environmental stack for ", date)
   s <- raster::stack(grdfile)
-  s <- s+0
+  check_ocean_depth(s$depth, paste("Prediction input", date))
 
+  # Build the mask AFTER reading this day's grid, avoiding an undefined/stale s.
   s <- crop(s, e)
-  s <- raster::mask(s, bathy_mask_resampled)
+  ocean <- ocean_on_grid(signed_elevation, s$depth)
+  s <- raster::mask(s, ocean)
+
+  # Retain the historical 1-700 m domain from the original signed-elevation mask.
+  # Apply it on the daily grid without bilinear interpolation of a binary mask.
+  depth_domain <- raster::calc(s$depth, function(z) ifelse(z >= 1 & z <= 700, 1, NA_real_))
+  s <- raster::mask(s, depth_domain)
+  check_ocean_depth(s$depth, paste("Masked prediction input", date))
   
   # Transform variables
   s$ln_fishingEffort <- log1p(s$fishingEffort)
@@ -150,6 +234,12 @@ for(i in 1:length(dates)) {
     # predict BRT
     # j=1
     pred_brt <- raster::predict(model = brt_models[[j]], object = s, n.trees=brt_models[[j]]$gbm.call$best.trees, type="response")
+
+    # Convert each positive-model prediction to an arithmetic mean in capsules/km2.
+    # Preserve the original bootstrap ensemble and its median/percentile summaries.
+    if (positive_component) {
+      pred_brt <- raster::calc(pred_brt, function(mu) positive_bpue_mean(mu, smearing[j]))
+    }
     
     # Add to stack list
     stack_list[[j]] <- pred_brt
@@ -179,6 +269,8 @@ for(i in 1:length(dates)) {
   # store file
   outfile <- paste0(product_folder, "/", format(date, "%Y%m%d"),"_", genus, "_", mod_code, "_pred.tif")
   writeRaster(pred_med, filename=outfile, overwrite=TRUE)
+  write_prediction_scale(outfile, prediction_units,
+                         if (positive_component) "log1p_training_smearing" else "bernoulli_response")
   #plot(pred_med)
   
   # store file
