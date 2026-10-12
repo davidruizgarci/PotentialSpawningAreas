@@ -14,6 +14,18 @@ library(raster)
 library(ncdf4)
 library(stringr)
 library(beepr)
+source("fun/validate_model_inputs.R")
+
+# Optional batch interface: local data root, year, new derived stack folder.
+# Keep source netCDF files and historical stacks untouched when using this route.
+args <- commandArgs(trailingOnly=TRUE)
+stack_year <- '2021'
+if(length(args)) {
+  if(length(args)!=3L||!grepl('^[0-9]{4}$',args[2]))stop('Provide data root, year and new stack folder')
+  input_data <- file.path(args[1],'input');temp_data <- file.path(args[1],'temp')
+  stack_year <- args[2]
+  if(dir.exists(args[3]))stop('Use a new derived stack folder')
+}
 
 # 1. Set static data repository -------------------------------------------------------
 # path to environmental static data
@@ -21,6 +33,7 @@ static_data <- paste0(input_data, "/summary_static/")
 
 # path to output
 outdir <- paste0(temp_data, "/stack_daily/") 
+if(length(args))outdir <- args[3]
 if (!dir.exists(outdir)) dir.create(outdir, recursive = TRUE)
 
 
@@ -41,7 +54,11 @@ m[] <- 1
 # 3. Stack static environmental data-------------------------------------------
 # import static maps
 depth <- raster(paste0(static_data, "/bathy.tif"))  # bathymetry
-depth <- depth+0
+# Convert signed seabed elevation to positive ocean depth before stacking.
+# Positive elevations are land and must remain excluded, rather than using abs().
+sea_reference <- depth
+depth <- raster::calc(depth, depth_from_elevation)
+assert_depth_raster(depth, "Static depth before stacking")
 
 slope <- raster(paste0(static_data, "/slope.tif"))  # slope
 slope <- slope+0
@@ -50,10 +67,10 @@ fishingEffort <- raster(paste0(static_data, "/FishingEffort.tif"))  # distance t
 fishingEffort <- fishingEffort+0
 
 SD_bottomT <- raster(paste0(static_data, "/SD_bottomT.tif"))  # distance to shore
-SD_bottomT <- fishingEffort+0
+SD_bottomT <- SD_bottomT+0
 
 SD_o2 <- raster(paste0(static_data, "/SD_o2.tif"))  # distance to shore
-SD_o2 <- fishingEffort+0
+SD_o2 <- SD_o2+0
 
 #substrate_folk5 <- raster(paste0(static_data, "/substrate_folk5.tif"))  # distance to shore
 #substrate_folk5 <- substrate_folk5+0
@@ -69,7 +86,7 @@ substrate_folk5 <- substrate_folk5+0
 # prepare function for stack
 prepareGrid <- function(r, m, method, name){
   rc <- raster::crop(r, m)  # crop by extent
-  rs <- raster::resample(r, m, method=method)  # resample
+  rs <- raster::resample(rc, m, method=method)  # resample
   rm <- raster::mask(rs, m)  # mask
   names(rm) <- name
   return(rm)
@@ -100,6 +117,7 @@ prepareStackForDay <- function(day_folder, variables, res, e, output_folder) {
   
   # Create an empty stack
   stack_dynamic <- stack()
+  target_raster <- NULL
   
   # Mapping of original variable names to new names
   variable_names_map <- list(
@@ -109,6 +127,7 @@ prepareStackForDay <- function(day_folder, variables, res, e, output_folder) {
     so = "bottom_so",
     po4 = "bottom_po4",
     uo = "bottom_uo",
+    vo = "bottom_vo",
     eke = "bottom_eke"
   )
   
@@ -116,7 +135,7 @@ prepareStackForDay <- function(day_folder, variables, res, e, output_folder) {
   # example to test code: variable <- variables[2]
     
     # Construct the file pattern for the variable
-    file_pattern <- paste0("*_", variable, "_3d.nc")
+    file_pattern <- paste0("_", variable, "_3d\\.nc$")
     
     # List netCDF files for the given variable
     nc_files <- list.files(path = day_folder, pattern = file_pattern, full.names = TRUE)
@@ -143,7 +162,7 @@ prepareStackForDay <- function(day_folder, variables, res, e, output_folder) {
       
       r_resampled <- resample(r, target_raster, method = "bilinear")
       
-      # Resamplear stack_static para que coincida con r_resampled
+      # Align the static layers with the dynamic grid
       stack_static_resampled <- resample(stack_static, r_resampled, method = "bilinear")
       
       # Stack the raster
@@ -159,6 +178,7 @@ prepareStackForDay <- function(day_folder, variables, res, e, output_folder) {
     }
   }
   
+  if(is.null(target_raster))stop('No dynamic environmental layers in ',day_folder)
   # Now add the static layers once, resampled to the same resolution as the dynamic stack
   if (!is.null(stack_static)) {
     
@@ -175,13 +195,10 @@ prepareStackForDay <- function(day_folder, variables, res, e, output_folder) {
   
   # Save the final stack to file
   if (nlayers(stack_final) > 0) {
-    # Extract the base directory and split by '/'
-    components <- unlist(strsplit(day_folder, "/"))
-    
-    # Assumes that folder structure includes year, month, day in the specified positions
-    year <- components[3]
-    month <- components[4]
-    day <- components[5]
+    # Read year/month/day from the directory names, independent of the root path.
+    year <- basename(dirname(dirname(day_folder)))
+    month <- basename(dirname(day_folder))
+    day <- basename(day_folder)
     
     # Create a date string for the file name
     date_string <- paste0(year, month, day)
@@ -189,8 +206,15 @@ prepareStackForDay <- function(day_folder, variables, res, e, output_folder) {
     # Define the output file path
     output_file <- file.path(output_folder, paste0("stack_", date_string, ".grd"))
     
-    # Save the final stack
+    # Exclude land on the final grid and check every valid depth before saving.
+    sea_grid <- ocean_mask_for_grid(sea_reference, stack_final$depth)
+    stack_final <- raster::mask(stack_final, sea_grid)
+    required_layers <- c('depth', 'slope', 'fishingEffort', 'bottom_temp', 'bottom_so')
+    if (!all(required_layers %in% names(stack_final))) stop('Missing required prediction layer')
+    assert_depth_raster(stack_final$depth, paste("Stack", date_string))
     writeRaster(stack_final, output_file, format = "raster", overwrite = TRUE)
+    # Read back the saved depth: successful writing is not a sign check.
+    assert_depth_raster(raster::stack(output_file)$depth, paste("Saved stack", date_string))
     
     cat("Stack saved to", output_file, "\n")
   }
@@ -201,7 +225,7 @@ prepareStackForDay <- function(day_folder, variables, res, e, output_folder) {
 
 
 # Function to process each dayly stack:
-processDailyStacks <- function(base_folder, variables, res, e) {
+processDailyStacks <- function(base_folder, variables, res, e, output_root) {
   
   # Get list of all month folders
   month_folders <- list.dirs(base_folder, full.names = TRUE, recursive = FALSE)
@@ -219,7 +243,7 @@ processDailyStacks <- function(base_folder, variables, res, e) {
       date_folder <- basename(day_folder)
       
       # Define output folder for the stack
-      output_folder <- day_folder
+      output_folder <- file.path(output_root,basename(base_folder),basename(month_folder),basename(day_folder))
       if (!dir.exists(output_folder)) {
         dir.create(output_folder, recursive = TRUE)
       }
@@ -235,11 +259,9 @@ processDailyStacks <- function(base_folder, variables, res, e) {
 
 # Stack you files:
 # General path:
-base_folder <- "input/cmems_predict_3d/2021"
+base_folder <- file.path(input_data,'cmems_predict_3d',stack_year)
 
 # Select the dynamic variables to extract (same names as catalog):
-catalog <- read.csv2("input/catalog_stack.csv", sep=";")
-catalog$variable
 variables <- c("bottomT", "o2", "nppv", "so", "po4", "eke", "uo", "vo")
 
 # Set the resolution and extent:
@@ -248,11 +270,20 @@ e <- extent(-4, 8, 34, 45)
 
 
 # Process the stacks
-processDailyStacks(base_folder, variables, res, e)
+processDailyStacks(base_folder, variables, res, e, outdir)
+files <- list.files(outdir,pattern='^stack_[0-9]{8}\\.grd$',recursive=TRUE,full.names=TRUE)
+dates <- as.Date(sub('^stack_([0-9]{8})\\.grd$','\\1',basename(files)),'%Y%m%d')
+expected <- seq(as.Date(paste0(stack_year,'-01-01')),as.Date(paste0(stack_year,'-12-31')),by='day')
+if(anyNA(dates)||anyDuplicated(dates)||!setequal(dates,expected))
+  stop('Rebuilt stacks do not cover the complete calendar year; inspect source day folders')
+manifest <- data.frame(date=format(dates,'%Y-%m-%d'),stack_path=normalizePath(files,winslash='/'))
+write.csv(manifest[order(manifest$date),],file.path(outdir,'stack_manifest.csv'),row.names=FALSE)
 beep()
 
 
 # Check some:
-stack <- brick("input/cmems_predict_3d/2021/01/01/stack_20210101.grd")
-print(stack)
-plot(stack)
+if(interactive()) {
+  example_stack <- brick(manifest$stack_path[1])
+  print(example_stack)
+  plot(example_stack)
+}
