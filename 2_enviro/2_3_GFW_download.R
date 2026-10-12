@@ -56,6 +56,7 @@ for(i in seq_along(years)){
     # Create start and end dates for the current month
     # month <- 1
     start_date <- as.Date(sprintf("%d-%02d-01", y, month))
+    # GFW excludes the upper date bound; use next month to retain the final day.
     end_date <- seq(start_date, by = "month", length.out = 2)[2]  # Exclusive start of next month
     
   

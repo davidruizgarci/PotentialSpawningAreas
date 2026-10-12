@@ -15,10 +15,13 @@ library(ncdf4)
 library(stringr)
 library(beepr)
 source("fun/validate_model_inputs.R")
+source("fun/workflow_settings.R")
 
 # Optional batch interface: local data root, year, new derived stack folder.
 # Keep source netCDF files and historical stacks untouched when using this route.
 args <- commandArgs(trailingOnly=TRUE)
+if(!length(args)&&!is.null(getOption('PotentialSpawningAreas.workflow')))
+  args <- workflow_arguments(c('data_root','prediction_year','stack_output'))
 stack_year <- '2021'
 if(length(args)) {
   if(length(args)!=3L||!grepl('^[0-9]{4}$',args[2]))stop('Provide data root, year and new stack folder')
@@ -278,6 +281,7 @@ if(anyNA(dates)||anyDuplicated(dates)||!setequal(dates,expected))
   stop('Rebuilt stacks do not cover the complete calendar year; inspect source day folders')
 manifest <- data.frame(date=format(dates,'%Y-%m-%d'),stack_path=normalizePath(files,winslash='/'))
 write.csv(manifest[order(manifest$date),],file.path(outdir,'stack_manifest.csv'),row.names=FALSE)
+set_workflow_output('stack_manifest',normalizePath(file.path(outdir,'stack_manifest.csv'),winslash='/'))
 beep()
 
 

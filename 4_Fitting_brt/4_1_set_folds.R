@@ -16,6 +16,7 @@ genus <- "Raja" #"Raja" #"Scyliorhinus"
 #Load data
 #file <-  file.path(temp_data, paste0("train_test/", genus, "_training_testing/", genus,"_train_dataset.csv"))
 file <-  file.path(temp_data, paste0("data_subsets/", genus, "_dataset_log_pred.csv"))
+# Use the final corrected table, matching extraction dates by unique haul code.
 final_file <- file.path(temp_data, "folds_dataset", paste0(genus, "_ALL_folds_dataset.csv"))
 data <- read_model_data(final_file, file)
 
@@ -31,6 +32,7 @@ str(data)
 data <- data %>%
   mutate(Haul_N = as.numeric(factor(code)))
 
+# Fix the seed so the historical display/shuffle columns can be reproduced.
 set.seed(123)
 data$RN <- sample.int(100, size=nrow(data), replace=T, prob=NULL)
 data <- data %>%
@@ -75,6 +77,7 @@ data <- data %>% sample_frac(1)
 
 # Keep entire geographic areas out of training when evaluating transfer.
 data$fold <- make_spatial_folds(data, k = n.folds, seed = 123)
+# Check that every training complement contains enough positive hauls to fit abundance.
 training_positives <- sapply(seq_len(n.folds), function(k)
   sum(data$N[data$fold != k] > 0))
 if (any(training_positives < 15)) stop('Too few positive hauls in a geographic training set')

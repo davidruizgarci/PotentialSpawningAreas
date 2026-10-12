@@ -18,6 +18,7 @@ source("fun/validate_model_inputs.R")
 
 
 bootstrap <- T
+# Keep the original signed elevation as an independent check of ocean membership.
 sea_reference <- raster::raster(file.path(input_data, 'summary_static', 'Bathy.tif'))
 
 # Presence Scyliorhinus
