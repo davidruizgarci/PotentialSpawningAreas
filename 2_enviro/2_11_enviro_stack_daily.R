@@ -14,6 +14,7 @@ library(raster)
 library(ncdf4)
 library(stringr)
 library(beepr)
+source("fun/validate_model_inputs.R")
 
 # 1. Set static data repository -------------------------------------------------------
 # path to environmental static data
@@ -41,7 +42,11 @@ m[] <- 1
 # 3. Stack static environmental data-------------------------------------------
 # import static maps
 depth <- raster(paste0(static_data, "/bathy.tif"))  # bathymetry
-depth <- depth+0
+# Convert signed seabed elevation to positive ocean depth before stacking.
+# Positive elevations are land and must remain excluded, rather than using abs().
+sea_reference <- depth
+depth <- raster::calc(depth, depth_from_elevation)
+assert_depth_raster(depth, "Static depth before stacking")
 
 slope <- raster(paste0(static_data, "/slope.tif"))  # slope
 slope <- slope+0
@@ -50,10 +55,10 @@ fishingEffort <- raster(paste0(static_data, "/FishingEffort.tif"))  # distance t
 fishingEffort <- fishingEffort+0
 
 SD_bottomT <- raster(paste0(static_data, "/SD_bottomT.tif"))  # distance to shore
-SD_bottomT <- fishingEffort+0
+SD_bottomT <- SD_bottomT+0
 
 SD_o2 <- raster(paste0(static_data, "/SD_o2.tif"))  # distance to shore
-SD_o2 <- fishingEffort+0
+SD_o2 <- SD_o2+0
 
 #substrate_folk5 <- raster(paste0(static_data, "/substrate_folk5.tif"))  # distance to shore
 #substrate_folk5 <- substrate_folk5+0
@@ -69,7 +74,7 @@ substrate_folk5 <- substrate_folk5+0
 # prepare function for stack
 prepareGrid <- function(r, m, method, name){
   rc <- raster::crop(r, m)  # crop by extent
-  rs <- raster::resample(r, m, method=method)  # resample
+  rs <- raster::resample(rc, m, method=method)  # resample
   rm <- raster::mask(rs, m)  # mask
   names(rm) <- name
   return(rm)
@@ -109,6 +114,7 @@ prepareStackForDay <- function(day_folder, variables, res, e, output_folder) {
     so = "bottom_so",
     po4 = "bottom_po4",
     uo = "bottom_uo",
+    vo = "bottom_vo",
     eke = "bottom_eke"
   )
   
@@ -116,7 +122,7 @@ prepareStackForDay <- function(day_folder, variables, res, e, output_folder) {
   # example to test code: variable <- variables[2]
     
     # Construct the file pattern for the variable
-    file_pattern <- paste0("*_", variable, "_3d.nc")
+    file_pattern <- paste0("_", variable, "_3d\\.nc$")
     
     # List netCDF files for the given variable
     nc_files <- list.files(path = day_folder, pattern = file_pattern, full.names = TRUE)
@@ -143,7 +149,7 @@ prepareStackForDay <- function(day_folder, variables, res, e, output_folder) {
       
       r_resampled <- resample(r, target_raster, method = "bilinear")
       
-      # Resamplear stack_static para que coincida con r_resampled
+      # Align the static layers with the dynamic grid
       stack_static_resampled <- resample(stack_static, r_resampled, method = "bilinear")
       
       # Stack the raster
@@ -175,13 +181,10 @@ prepareStackForDay <- function(day_folder, variables, res, e, output_folder) {
   
   # Save the final stack to file
   if (nlayers(stack_final) > 0) {
-    # Extract the base directory and split by '/'
-    components <- unlist(strsplit(day_folder, "/"))
-    
-    # Assumes that folder structure includes year, month, day in the specified positions
-    year <- components[3]
-    month <- components[4]
-    day <- components[5]
+    # Read year/month/day from the directory names, independent of the root path.
+    year <- basename(dirname(dirname(day_folder)))
+    month <- basename(dirname(day_folder))
+    day <- basename(day_folder)
     
     # Create a date string for the file name
     date_string <- paste0(year, month, day)
@@ -189,8 +192,16 @@ prepareStackForDay <- function(day_folder, variables, res, e, output_folder) {
     # Define the output file path
     output_file <- file.path(output_folder, paste0("stack_", date_string, ".grd"))
     
-    # Save the final stack
+    # Exclude land on the final grid and check every valid depth before saving.
+    sea_grid <- raster::resample(sea_reference, stack_final$depth, method = "ngb")
+    sea_grid <- raster::calc(sea_grid, function(z) ifelse(z < 0, 1, NA_real_))
+    stack_final <- raster::mask(stack_final, sea_grid)
+    required_layers <- c('depth', 'slope', 'fishingEffort', 'bottom_temp', 'bottom_so')
+    if (!all(required_layers %in% names(stack_final))) stop('Missing required prediction layer')
+    assert_depth_raster(stack_final$depth, paste("Stack", date_string))
     writeRaster(stack_final, output_file, format = "raster", overwrite = TRUE)
+    # Read back the saved depth: successful writing is not a sign check.
+    assert_depth_raster(raster::stack(output_file)$depth, paste("Saved stack", date_string))
     
     cat("Stack saved to", output_file, "\n")
   }

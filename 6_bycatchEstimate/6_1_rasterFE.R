@@ -24,7 +24,7 @@ for(i in seq_along(years)){
   for(month in 1:12) {
     # Create start and end dates for the current month
     start_date <- as.Date(sprintf("%d-%02d-01", y, month))
-    end_date <- as.Date(sprintf("%d-%02d-%02d", y, month, days_in_month(start_date)))  # End date of the month
+    end_date <- seq(start_date, by = "month", length.out = 2)[2]  # Exclusive start of next month
     
     # get information: GFW base function to get raster from API and convert response to data frame
     raw <- tryCatch({

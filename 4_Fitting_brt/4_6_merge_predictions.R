@@ -12,6 +12,11 @@ library(beepr)
 library(raster)
 library(lubridate)
 
+# The historical summary-map merge below cannot produce arithmetic means or
+# joint hurdle intervals. Keep final outputs disabled until mean validation and
+# paired-haul bootstrap prediction are complete; do not multiply interval widths.
+stop('Final hurdle maps require validated positive means and joint bootstrap predictions. See README.md.')
+
 # 1. Set data repository--------------------------------------------------------
 # Import landmask
 mask <- st_read("input/landmask/Europa/Europe_coastline_poly.shp")
