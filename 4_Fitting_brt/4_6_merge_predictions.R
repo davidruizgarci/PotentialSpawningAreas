@@ -15,7 +15,7 @@ library(lubridate)
 # The historical summary-map merge below cannot produce arithmetic means or
 # joint hurdle intervals. Keep final outputs disabled until mean validation and
 # paired-haul bootstrap prediction are complete; do not multiply interval widths.
-stop('Final hurdle maps require validated positive means and joint bootstrap predictions. See README.md.')
+stop('Historical merge disabled. Use 4_5_1_predict_hurdle_joint.R and the final-results workflow.')
 
 # 1. Set data repository--------------------------------------------------------
 # Import landmask

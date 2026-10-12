@@ -16,12 +16,24 @@ library(stringr)
 library(beepr)
 source("fun/validate_model_inputs.R")
 
+# Optional batch interface: local data root, year, new derived stack folder.
+# Keep source netCDF files and historical stacks untouched when using this route.
+args <- commandArgs(trailingOnly=TRUE)
+stack_year <- '2021'
+if(length(args)) {
+  if(length(args)!=3L||!grepl('^[0-9]{4}$',args[2]))stop('Provide data root, year and new stack folder')
+  input_data <- file.path(args[1],'input');temp_data <- file.path(args[1],'temp')
+  stack_year <- args[2]
+  if(dir.exists(args[3]))stop('Use a new derived stack folder')
+}
+
 # 1. Set static data repository -------------------------------------------------------
 # path to environmental static data
 static_data <- paste0(input_data, "/summary_static/")
 
 # path to output
 outdir <- paste0(temp_data, "/stack_daily/") 
+if(length(args))outdir <- args[3]
 if (!dir.exists(outdir)) dir.create(outdir, recursive = TRUE)
 
 
@@ -105,6 +117,7 @@ prepareStackForDay <- function(day_folder, variables, res, e, output_folder) {
   
   # Create an empty stack
   stack_dynamic <- stack()
+  target_raster <- NULL
   
   # Mapping of original variable names to new names
   variable_names_map <- list(
@@ -165,6 +178,7 @@ prepareStackForDay <- function(day_folder, variables, res, e, output_folder) {
     }
   }
   
+  if(is.null(target_raster))stop('No dynamic environmental layers in ',day_folder)
   # Now add the static layers once, resampled to the same resolution as the dynamic stack
   if (!is.null(stack_static)) {
     
@@ -211,7 +225,7 @@ prepareStackForDay <- function(day_folder, variables, res, e, output_folder) {
 
 
 # Function to process each dayly stack:
-processDailyStacks <- function(base_folder, variables, res, e) {
+processDailyStacks <- function(base_folder, variables, res, e, output_root) {
   
   # Get list of all month folders
   month_folders <- list.dirs(base_folder, full.names = TRUE, recursive = FALSE)
@@ -229,7 +243,7 @@ processDailyStacks <- function(base_folder, variables, res, e) {
       date_folder <- basename(day_folder)
       
       # Define output folder for the stack
-      output_folder <- day_folder
+      output_folder <- file.path(output_root,basename(base_folder),basename(month_folder),basename(day_folder))
       if (!dir.exists(output_folder)) {
         dir.create(output_folder, recursive = TRUE)
       }
@@ -245,11 +259,9 @@ processDailyStacks <- function(base_folder, variables, res, e) {
 
 # Stack you files:
 # General path:
-base_folder <- "input/cmems_predict_3d/2021"
+base_folder <- file.path(input_data,'cmems_predict_3d',stack_year)
 
 # Select the dynamic variables to extract (same names as catalog):
-catalog <- read.csv2("input/catalog_stack.csv", sep=";")
-catalog$variable
 variables <- c("bottomT", "o2", "nppv", "so", "po4", "eke", "uo", "vo")
 
 # Set the resolution and extent:
@@ -258,11 +270,20 @@ e <- extent(-4, 8, 34, 45)
 
 
 # Process the stacks
-processDailyStacks(base_folder, variables, res, e)
+processDailyStacks(base_folder, variables, res, e, outdir)
+files <- list.files(outdir,pattern='^stack_[0-9]{8}\\.grd$',recursive=TRUE,full.names=TRUE)
+dates <- as.Date(sub('^stack_([0-9]{8})\\.grd$','\\1',basename(files)),'%Y%m%d')
+expected <- seq(as.Date(paste0(stack_year,'-01-01')),as.Date(paste0(stack_year,'-12-31')),by='day')
+if(anyNA(dates)||anyDuplicated(dates)||!setequal(dates,expected))
+  stop('Rebuilt stacks do not cover the complete calendar year; inspect source day folders')
+manifest <- data.frame(date=format(dates,'%Y-%m-%d'),stack_path=normalizePath(files,winslash='/'))
+write.csv(manifest[order(manifest$date),],file.path(outdir,'stack_manifest.csv'),row.names=FALSE)
 beep()
 
 
 # Check some:
-stack <- brick("input/cmems_predict_3d/2021/01/01/stack_20210101.grd")
-print(stack)
-plot(stack)
+if(interactive()) {
+  example_stack <- brick(manifest$stack_path[1])
+  print(example_stack)
+  plot(example_stack)
+}

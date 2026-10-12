@@ -1,6 +1,6 @@
 # Positive mean validation: 12 October 2026
 
-The nested experiment is complete. Neither genus should yet be treated as having a definitive validated abundance map. Scyliorhinus has weak geographic abundance performance; Raja has useful predictive improvement but unstable family selection. The saved full-data fits are provisional candidates, not replacement final maps.
+The original nested experiment and a limited exploratory follow-up are complete. The operational decision is an additive corrected-log BRT for Scyliorhinus and an additive direct-BPUE BRT for Raja. This closes the formulation choice for production, while retaining weak geographic abundance performance for Scyliorhinus and the exploratory provenance of the decision. Full-year maps and real annual totals have not yet been regenerated.
 
 ## Reproducible workflow
 
@@ -44,11 +44,40 @@ The separate full-data selection averages internal scores across three geographi
 
 Raja's full-data selection disagrees with the better-performing family on outer assessment. This is evidence of instability, not a reason to silently override the prespecified selector after seeing its test results. Direct BPUE is the stronger comparative result for Raja in this experiment; choosing it post hoc would require reporting that selection as exploratory. Scyliorhinus provides little evidence that the tested mean models reliably allocate abundance among reserved geographic areas.
 
-## Decision and remaining work
+## Decision after the original experiment
 
-Retain both candidates and all diagnostics; keep the automatically selected objects provisional. For Scyliorhinus, investigate geographic bias and influential high catches before interpreting abundance-based PSA boundaries. For Raja, investigate correction variability and the inner/outer selection disagreement, with a limited prespecified comparison of more regularised or alternative positive-mean formulations. Any further experiment informed by these outcomes must be labelled exploratory; a new independent dataset would provide stronger confirmation.
+The original experiment motivated a limited comparison of more regularised and alternative positive-mean formulations. The automatically selected objects from script 4.2.2.3 remain historical candidates; production uses the separate locked fits from 4.2.2.5, based on the follow-up below. Because the follow-up was informed by these outcomes, it is exploratory. A new independent dataset would provide stronger confirmation.
 
-Once a final formulation is defensible, integrate it into prediction with a joint bootstrap of occurrence, positive fit and any retransformation correction. Generate joint-replicate intervals, rebuild the annual stack series and recompute annual integration. Script 4.6 remains deliberately blocked: this experiment does not repair the historical multiplication of separate component interval widths. Manuscript numerical claims and reviewer responses require updating after those final results; no final annual total is claimed here.
+Production now has a paired-location bootstrap and a joint prediction route, described below. Script 4.6 remains deliberately blocked because its historical multiplication of component interval widths is invalid. The replacement entry points are 4.5.1 and 6.4.1. Manuscript numerical claims and reviewer responses require updating after the full annual regeneration; no real annual total is claimed here.
+
+## Focused follow-up and locked decision
+
+The follow-up retains the original training-only occurrence configurations and the identical 40 outer assessments. Positive BRT complexity is fixed at 1, learning rate at 0.005, and tree count chosen internally from 250, 750 and 1500. A positive Gamma GLM with a log link and the same five linear predictors provides a simpler skew-compatible alternative. Its training-only standardisation and convex Gamma mean likelihood are fitted with a checked BFGS line search, because standard IRLS failed to converge in some small, skewed subsets even with a larger iteration allowance. The fitted means agree with standard Gamma GLM on a well-conditioned synthetic test. No catch was removed, capped or winsorised. These reused assessment results are exploratory, not an independent validation of the final decision. See [R's family documentation](https://www.stat.ethz.ch/R-manual/R-devel/library/stats/html/family.html) for Gamma log-link models.
+
+| Genus | Positive formulation | Geographic RMSE | Geographic mean | Random RMSE |
+|---|---|---:|---:|---:|
+| Scyliorhinus | Additive direct BPUE | 165.70 | 56.35 | 152.47 |
+| Scyliorhinus | Additive corrected log1p | **164.52** | 53.49 | 159.92 |
+| Scyliorhinus | Gamma log-link GLM | 198.32 | 61.11 | 146.18 |
+| Raja | Additive direct BPUE | **94.70** | 28.77 | 66.95 |
+| Raja | Additive corrected log1p | 101.29 | 36.30 | 85.06 |
+| Raja | Gamma log-link GLM | 115.83 | 31.89 | 100.11 |
+
+The fixed corrected-log family wins over fixed direct BPUE in all three geographic partitions for Scyliorhinus; fixed direct BPUE wins in all three for Raja. Gamma does not improve geographic prediction for either genus, although its random-partition error for Scyliorhinus is lower. The expanded inner family selector itself has geographic RMSE 200.57 for Scyliorhinus and 97.75 for Raja. Therefore, a reliable automatic family selector has not been demonstrated; the operational choice is explicitly a post-hoc fixed-family decision, not a new claim of unbiased final-model validation. Differences between the two BRT candidates for Scyliorhinus remain small.
+
+The five largest Raja BPUE observations account for 48.44% of the sum of observed haul densities and lie between 40.35 and 40.47 degrees N. The author identifies this broader area as a known high-catch setting. This is consistent with aggregation, but coordinates and density concentration alone do not establish a biological mechanism. Five hauls explain 74.85% of direct-model squared error and 72.44% of corrected-log squared error in the original geographic assessment. For Scyliorhinus, the five largest densities account for 43.82% of the density sum, and five hauls explain 75.51% and 81.89% of those respective errors. Density-sum shares are descriptive sample statistics, not shares of area-wide abundance or annual captures. The detailed local audit also reports captured-count shares and latitude-band performance.
+
+Lock Scyliorhinus to corrected log1p and Raja to direct BPUE, with additive positive BRTs. Within-family full-data tuning chooses 750 trees at learning rate 0.005 for both. The final Scyliorhinus correction is 2.09294; Raja needs no inverse-log correction. Retain all high catches. Do not seek further candidate families merely to improve these reused assessment scores. Describe Scyliorhinus abundance allocation as weakly supported: the additive log model improves geographic RMSE by only 2.4% over the training-mean baseline. Raja's additive direct model improves by 21.4%, but underpredicts the pooled geographic mean (28.77 versus 33.47).
+
+## Production implementation and actual verification
+
+Script 4.2.2.5 fits the locked models and paired-location bootstrap, conditional on fixed predictors, families and tuned parameters. The same location remapping is used for both components and genera, with the retransformation correction refitted per replicate. Two hundred joint replicates per genus have been generated locally. They do not account for model-family selection, unmodelled spatial dependence or effort/conversion uncertainty.
+
+Script 4.5.1 writes daily joint means, conditional mean intervals, occurrence, complete replicate rasters and domain/identity audits. Both genera have been predicted on the real rebuilt 1 January 2021 stack with all 200 replicates, and point, mean and percentile values checked against direct model predictions. Script 6.4.1 integrates by cell and date within each replicate before calculating period intervals. The integration checks include known small-grid arithmetic, missing/negative effort and shifted grids. A real-map test uses synthetic swept area and must not be interpreted as a real bycatch estimate.
+
+On the tested day, 3499 of 3531 depth-domain cells have complete predictors; 32 coastal cells lack one or more predictors. The domain audit retains that distinction. Production integration stops if any such cell has positive swept area, rather than silently treating missing BPUE as zero. This coverage must be checked against the real effort series before certifying annual totals.
+
+The annual stack builder now supports an explicit data root, year and new derived output folder, retaining original inputs and requiring a complete unique calendar before writing its manifest. A full calendar-year stack/map rebuild and real effort integration remain pending. Follow [Final results workflow](../../Final_results_workflow.md) for the exact execution order and remaining PSA, figure and manuscript work.
 
 ## Verification
 
