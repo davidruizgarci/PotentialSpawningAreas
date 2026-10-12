@@ -86,3 +86,12 @@ assert_depth_raster <- function(depth, context = 'Prediction stack') {
   if (!present) stop(context, ': no valid ocean depth cells')
   invisible(TRUE)
 }
+
+# 4. Identify ocean at target cell centres without averaging land and sea -------
+ocean_mask_for_grid <- function(elevation, grid) {
+  mask <- raster::raster(grid)
+  xy <- raster::xyFromCell(grid, seq_len(raster::ncell(grid)))
+  z <- raster::extract(elevation, xy, method = 'simple')
+  raster::values(mask) <- ifelse(!is.na(z) & z < 0, 1, NA_real_)
+  mask
+}

@@ -193,8 +193,7 @@ prepareStackForDay <- function(day_folder, variables, res, e, output_folder) {
     output_file <- file.path(output_folder, paste0("stack_", date_string, ".grd"))
     
     # Exclude land on the final grid and check every valid depth before saving.
-    sea_grid <- raster::resample(sea_reference, stack_final$depth, method = "ngb")
-    sea_grid <- raster::calc(sea_grid, function(z) ifelse(z < 0, 1, NA_real_))
+    sea_grid <- ocean_mask_for_grid(sea_reference, stack_final$depth)
     stack_final <- raster::mask(stack_final, sea_grid)
     required_layers <- c('depth', 'slope', 'fishingEffort', 'bottom_temp', 'bottom_so')
     if (!all(required_layers %in% names(stack_final))) stop('Missing required prediction layer')

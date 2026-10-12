@@ -122,9 +122,9 @@ for(i in 1:length(dates)) {
 
   s <- crop(s, e)
   # Check ocean membership independently of the positive-depth layer.
-  sea_grid <- raster::resample(sea_reference, s$depth, method = 'ngb')
+  sea_grid <- ocean_mask_for_grid(sea_reference, s$depth)
   land_depth <- raster::overlay(s$depth, sea_grid, fun = function(d,z)
-    as.integer(!is.na(d) & !is.na(z) & z >= 0))
+    as.integer(!is.na(d) & is.na(z)))
   if (raster::cellStats(land_depth, 'sum', na.rm = TRUE) > 0)
     stop('Prediction stack contains depth values on land; rebuild with script 2.11')
   # Apply the depth domain on the same grid, without interpolating a binary mask.

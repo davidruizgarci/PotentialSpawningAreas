@@ -41,4 +41,19 @@ j <- combine_hurdle_replicates(p,y)
 stopifnot(all(j==matrix(c(10,.9),nrow=1)), abs(summarise_joint_predictions(j)$mean-5.45)<1e-12)
 colnames(y) <- rev(colnames(y))
 stopifnot(fails(combine_hurdle_replicates(p,y)))
+
+# 6. Coarse ocean masks must use signed elevation at target cell centres --------
+if (requireNamespace('raster', quietly = TRUE)) {
+  elevation <- raster::raster(nrows=20,ncols=20,xmn=0,xmx=2,ymn=0,ymx=2)
+  raster::values(elevation) <- 30
+  target <- raster::raster(nrows=2,ncols=2,xmn=0,xmx=2,ymn=0,ymx=2)
+  centres <- raster::xyFromCell(target,1:4)
+  elevation[raster::cellFromXY(elevation,centres)] <- -20
+  ocean <- ocean_mask_for_grid(elevation,target)
+  stopifnot(all(raster::getValues(ocean)==1))
+  # Most source pixels are land: averaging them must not redefine these centres.
+  elevation[raster::cellFromXY(elevation,centres)[1]] <- 30
+  ocean <- ocean_mask_for_grid(elevation,target)
+  stopifnot(is.na(raster::getValues(ocean)[1]),all(raster::getValues(ocean)[2:4]==1))
+}
 message('Date keys, columns, depth, land exclusion, geographic groups and joint predictions passed')
