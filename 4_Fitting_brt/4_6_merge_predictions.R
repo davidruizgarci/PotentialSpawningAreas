@@ -285,8 +285,9 @@ source(file.path(code_dir, "fun", "joint_hurdle_uncertainty.R"))
 # To test one day first, replace dates$date below with as.Date("2021-01-01").
 joint_hurdle_uncertainty(
   genus = genus,
-  dates = dates$date,
+  dates = dates$date, 
   data_dir = main_dir,
   output_dir = outdir,
   overwrite = FALSE
 )
+beep()
