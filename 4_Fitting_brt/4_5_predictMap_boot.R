@@ -60,7 +60,7 @@ bootstrap <- T
  # "Scyliorhinus_abundance"
  # "Scyliorhinus_presence"
  
- prediction_case <- "Raja_abundance"
+ prediction_case <- "Scyliorhinus_presence" #Raja_abundance #Raja_presence #Scyliorhinus_abundance #Scyliorhinus_presence
  
  
  # Retrieve the original model folder parameters --------------------------------
