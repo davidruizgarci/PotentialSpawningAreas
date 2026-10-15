@@ -11,22 +11,24 @@ library(lubridate)
 library(dplyr)
 library(sf)
 
-# 1. Load BPUE rasters----------------------------------------------------------
-# Raja
-genus <- "Raja" 
-family <- "LN_gaussian_Final2" 
-type <- "_NKm2" 
-mod_code <- "brt"
-dataset <- "ALL" 
+# Keep corrected hurdle predictions in capsules/km2; do not apply expm1 again.
+if (!exists("code_dir")) stop("Run the local 0_setup.R to set code_dir first")
+source(file.path(code_dir, "fun", "training_smearing.R"))
 
-# Scyliorhinus
-genus <- "Scyliorhinus" 
-family <- "bernuilli_Final2" 
-type <- "_PA" 
+# 1. Select corrected central hurdle maps ---------------------------------------
+# Choose "Raja" or "Scyliorhinus" and run this optional export once per genus.
+# Both corrected joint-map series are saved in their occurrence model folders.
+genus <- "Raja"
+if (!genus %in% c("Raja", "Scyliorhinus")) stop("Choose Raja or Scyliorhinus")
+family <- "bernuilli_Final2"
+type <- "_PA"
 mod_code <- "brt"
-dataset <- "ALL" 
+dataset <- "ALL"
 
-# Create date sequences that you wish:
+# Use this script for cropped BPUE exports and inspection.
+# The updated 6_4 reads the corrected daily maps directly and applies the 6_2 domain.
+
+# Define the dates to export.
 date_start <- as.Date("2021-01-01")
 date_end <- as.Date("2021-12-31")
 #date_end <- as.Date("2021-01-02")
@@ -36,7 +38,7 @@ dates <- seq.Date(date_start, date_end, by="day")  # define sequence
 year_df <- data.frame(date = dates)
 head(year_df)
 
-# Prepare your date list and other necessary variables
+# Keep dates beside the raster list so exported filenames use the correct calendar day.
 dates <- year_df 
 stack_list <- vector("list", nrow(dates))  # Pre-allocate list
 season <- "2021" #2021, spring, winter, summer, autumn
@@ -51,14 +53,15 @@ for (i in 1:nrow(dates)) {
   MM <- sprintf("%02d", month(date))
   DD <- sprintf("%02d", day(date))
   
-  # Construct the file pattern (chose for 95% CI or BPUE)
-  pat <- paste0("hurdle_X", format(date, "%Y%m%d"), "_", genus, "_", mod_code, "_pred_cir.tif")
+  # Match the exact central-map name; exclude interval maps, metadata and backups.
+  # Read central BPUE maps only; the daily interval maps are separate outputs of 4_6.
+  pat <- paste0("^hurdle_X", format(date, "%Y%m%d"), "_", genus, "_", mod_code, "_pred\\.tif$")
   #pat <- paste0("hurdle_X", format(date, "%Y%m%d"), "_", genus, "_", mod_code, "_pred.tif")
   
   # Construct the path to the directory containing TIFF files
-  stack_repo <- paste0("output/", mod_code, "/", paste0(genus, type, "_", family), "/predict_boost/2021/", MM)
+  stack_repo <- file.path(output_data, mod_code, paste0(genus, type, "_", family), "predict_boost", as.character(YYYY), MM)
   
-  # Debugging prints
+  # Show the selected folder and exact filename pattern for this date.
   print(paste("Stack Repo:", stack_repo))
   print(paste("Pattern:", pat))
   
@@ -74,6 +77,10 @@ for (i in 1:nrow(dates)) {
   # Debugging print
   print(paste("Found TIFF files:", length(tiffile)))
   
+  if (length(tiffile) != 1L) stop("Expected one corrected hurdle map for ", date)
+  # Require the scale record written by 4_6; do not substitute an older unverified map.
+  check_prediction_scale(tiffile, "capsules/km2")
+
   if (length(tiffile) > 0) {
     s <- tryCatch({
       raster::stack(tiffile)
@@ -88,7 +95,7 @@ for (i in 1:nrow(dates)) {
   }
 }
 
-# Print a message indicating completion
+# Confirm that all requested dates have been read.
 print("Processing completed.")
 summary(stack_list)
 
@@ -109,11 +116,14 @@ bathy_mask <- calc(bathy_filtered, function(x) {
 })
 
 # Load BPUE
-path <- paste0("output/", mod_code, "/", paste0(genus, type, "_", family), "/predict_boost/2021/", season, "_hurdle_pred_median.tif")
-yBPUE <- raster(path)
+# Use the first verified daily map for its grid, without requiring an annual summary.
+if (!length(stack_list) || is.null(stack_list[[1]])) stop("Load the verified daily maps first")
+yBPUE <- stack_list[[1]][[1]]
 print(yBPUE)
 
 # Resample bathy_mask to match the resolution of habitat
+# Retain the existing crop below for this optional export.
+# This older binary-mask interpolation is not the domain used by updated 6_4.
 bathy_mask_resampled <- resample(bathy_mask, yBPUE, method = "bilinear")
 print(bathy_mask_resampled)
 
@@ -142,6 +152,7 @@ stack_list_single_layer <- lapply(stack_list_masked, function(raster_stack) {
 })
 
 # Perform intersection for each raster
+# Preserve the existing polygon intersection for these optional GeoJSON exports.
 stack_list_intersection <- lapply(seq_along(stack_list_single_layer), function(i) {
   # Get the raster layer based on the index
   raster_layer <- stack_list_single_layer[[i]]
@@ -160,21 +171,10 @@ stack_list_intersection <- lapply(seq_along(stack_list_single_layer), function(i
 beep()
 
 
-# Apply expm1 transformation to habitat values in each sf object
-stack_list_transformed <- lapply(stack_list_intersection, function(sf_object) {
-  # Extract the name of the first column, assuming it represents habitat values
-  # sf_object <- stack_list_intersection[[1]]
-  habitat_column <- names(sf_object)[1]  # Adjust if it's not always the first column
-  # Check if the column exists
-  if (habitat_column %in% names(sf_object)) {
-    # Apply transformation to the habitat column
-    sf_object[[habitat_column]] <- expm1(sf_object[[habitat_column]])
-  } else {
-    warning("The habitat column is missing in one of the sf objects.")
-  }
-  
-  return(sf_object)
-})
+# Keep the abundance correction already applied before presence and abundance were multiplied.
+# Keep the original object name for the downstream cropping/export code.
+# Do not apply expm1 here: that would transform the corrected BPUE a second time.
+stack_list_transformed <- stack_list_intersection
 
 # 3.3. Plot the first sf object as example--------------------------------------
 print(stack_list_transformed[[1]])
@@ -188,10 +188,10 @@ habitat_column <- names(sf_object)[1]
 habitat_column
 
 ggplot() +
-  geom_sf(data = stack_list_transformed[[1]], aes(fill = hurdle_X20210101_Scyliorhinus_brt_pred_cir)) + #hurdle_X20210101_Scyliorhinus_brt_pred
+  geom_sf(data = stack_list_transformed[[1]], aes(fill = .data[[habitat_column]])) +
   scale_fill_viridis() +  # Apply viridis color scale
   theme_minimal() +
-  labs(title = "Spatial Plot of hurdle_X20210101_Raja_brt_pred_1") 
+  labs(title = paste(genus, "central BPUE:", dates$date[1])) 
 
 # 4. Save sf and raster objects-------------------------------------------------
 # Directory to save the sf files
@@ -200,8 +200,8 @@ if (!dir.exists(output_dir)) dir.create(output_dir, recursive = TRUE)
 
 # Reference raster for alignment (e.g., from raster_stack)
 input_dir <- paste0("output/", mod_code, "/", paste0(genus, type, "_", family), "/predict_boost/2021/")
-path <- paste0(input_dir, "2021_hurdle_pred_median.tif")
-reference_raster <- raster(path)  # Assuming all rasters share the same extent/resolution
+# Reuse that same verified daily grid when exporting the cropped objects.
+reference_raster <- yBPUE
 plot(reference_raster)
 print(reference_raster)
 
@@ -210,12 +210,11 @@ for (i in seq_along(stack_list_transformed)) {
   # i=1
   sf_object <- stack_list_transformed[[i]]
   
-  # Extract the date part from the column name (e.g., "20210101" from "hurdle_X20210101_Raja_brt_pred_1")
-  date_string <- substr(names(sf_object)[1], 9, 16)
+  # Use the date stored with this list position instead of parsing an sf column name.
+  date_string <- format(dates$date[i], "%Y%m%d")
   
   # Create GeoJSON output filename
-  geojson_filename <- file.path(output_dir, paste0("sf_cir_", date_string, ".geojson"))
-  #geojson_filename <- file.path(output_dir, paste0("sf_", date_string, ".geojson"))
+  geojson_filename <- file.path(output_dir, paste0("sf_", date_string, ".geojson"))
   
   # check:
   #plot(sf_object)
@@ -234,18 +233,19 @@ for (i in seq_along(stack_list_transformed)) {
   # Align extents and resolutions
   spatial_raster <- raster(spatial_object)
   spatial_raster <- crop(spatial_raster, extent(reference_raster))
+  # Retain the existing export-grid handling; the bycatch integration does not read these exports.
   reference_raster <- extend(reference_raster, extent(spatial_raster))  # Optional
   
   # Resample to match reference raster
   aligned_raster <- resample(spatial_raster, reference_raster, method = "bilinear")
   field_name <- names(spatial_object)[1]
   
-  # Ensure the column is numeric
+  # Keep the BPUE field numeric before converting the polygons back to raster cells.
   if (!is.numeric(spatial_object[[field_name]])) {
     spatial_object[[field_name]] <- as.numeric(spatial_object[[field_name]])
   }
   
-  # Rasterize with the "total_bycatch" field
+  # Restore the central BPUE field on the reference grid; these values are capsules/km2.
   rasterized <- rasterize(
     spatial_object,
     aligned_raster,
@@ -259,19 +259,19 @@ for (i in seq_along(stack_list_transformed)) {
   #print(rasterized)
   
   # Create a file name for the raster
-  raster_filename <- file.path(output_dir, paste0("raster_cir_", date_string, ".tif"))
-  #raster_filename <- file.path(output_dir, paste0("raster_", date_string, ".tif"))
+  raster_filename <- file.path(output_dir, paste0("raster_", date_string, ".tif"))
   
   # Save as GeoTIFF
   writeRaster(rasterized, raster_filename, format = "GTiff", overwrite = TRUE)
+  # Record the units of this central BPUE export for later checks.
+  write_prediction_scale(raster_filename, "capsules/km2", "cropped_corrected_hurdle_point")
   print(paste("Saved Raster:", raster_filename))
 }
 beep()
 
-# Save stack on a whole:
+# Save the cropped central BPUE objects together for later inspection.
 summary(stack_list_transformed)
 output_dir <- paste0("output/", mod_code, "/", paste0(genus, type, "_", family), "/predict_boost/2021/hurdle_crop/stack/")
 if (!dir.exists(output_dir)) dir.create(output_dir, recursive = TRUE)
-#path <- paste0(output_dir, "stack_list_transformed.rds")
-path <- paste0(output_dir, "stack_cir_list_transformed.rds")
+path <- paste0(output_dir, "stack_list_transformed.rds")
 saveRDS(stack_list_transformed, path)

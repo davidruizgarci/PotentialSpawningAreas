@@ -1,123 +1,64 @@
 # ------------------------------------------------------------------------------
-
-# Title: Predicting Potential Spawning Areas: a novel framework for elasmobranch conservation and spatial management 
-
-#---------------------------------------------------------------------------------------------------
-# 6.4. Estimate total bycatch for a each day based on fishing effort and bycatch prediction maps
-#---------------------------------------------------------------------------------------------------
-# You need to combine the daily trawl fishing effort maps with the daily bycatch per unit of effort maps. 
+# 6.4. Integrate conservative GFW v4 hours with corrected daily hurdle predictions
+# ------------------------------------------------------------------------------
 library(raster)
-library(sf)
 library(dplyr)
-library(exactextractr)
 
-# 1.Load stacks-----------------------------------------------------------------
-# Daily fishing effort rasters:
-input_dir <- "input/gfwr/rawdata/monthly/summarydata/daily/maps/resampled"
-
-# List all the .tif files in the directory (you can adjust the pattern if needed)
-FE_list <- list.files(input_dir, pattern = "*.tif", full.names = TRUE)
-summary(FE_list)
-
-#effort_stack <- stack("input/gfwr/rawdata/monthly/summarydata/daily/maps/stacked_raster.tif")  # Daily fishing effort maps
-#print(effort_stack[[3]])
-#plot(effort_stack[[3]])
+# Check that the local setup has been run before looking for the helper files.
+if (!exists("code_dir")) stop("Run the local 0_setup.R first")
+source(file.path(code_dir,"fun","training_smearing.R"))
+source(file.path(code_dir,"fun","effort_grid_checks.R"))
 
 
-# Daily BPUE
-# Raja
-genus <- "Raja" 
-family <- "LN_gaussian_Final2" 
-type <- "_NKm2" 
-mod_code <- "brt"
-dataset <- "ALL" 
+# 1. Select one genus and the exact calendar to integrate -----------------------
+# Choose "Raja" or "Scyliorhinus" below and run the script once for each genus.
+# Choose the genus for this run; run the script separately for Raja and Scyliorhinus.
+genus <- "Raja"
+if (!genus %in% c("Raja","Scyliorhinus")) stop("Unknown genus")
 
-# Scyliorhinus
-genus <- "Scyliorhinus" 
-family <- "bernuilli_Final2" 
-type <- "_PA" 
-mod_code <- "brt"
-dataset <- "ALL" 
+# Use the full 2021 calendar; every date must have its corresponding input files.
+dates <- seq(as.Date("2021-01-01"),as.Date("2021-12-31"),by="day")
 
-# List all the .tif files in the directory (you can adjust the pattern if needed)
-input_dir <- paste0("output/", mod_code, "/", paste0(genus, type, "_", family), "/predict_boost/2021/hurdle_crop")
-bpue_list <- list.files(input_dir, pattern = "*.tif", full.names = TRUE)
-bpue_list <- bpue_list[!grepl("cir", bpue_list)]
-#bpue_list <- list.files(input_dir, pattern = "^raster_cir.*\\.tif$", full.names = TRUE)
-summary(bpue_list)
+# Keep this new effort series in its own folder, separate from the historical data.
+effort_dir <- file.path(input_data,"gfwr/rawdata/monthly_v4_2021")
+study_dir <- file.path(effort_dir,"summarydata/daily/maps_conservative/study_domain")
 
+# Construct one expected effort filename per date and stop if any day is missing.
+FE_list <- daily_files(study_dir,dates,function(day) paste0(day,".tif"))
 
-# 2. Ensure both stacks have the same dimensions and alignment------------------
-# Load all rasters and create a stack
-raster_stack <- stack(FE_list)
+# Read the corrected joint maps from the presence folder, where 4.6 saves them for both
+# genera.
+bpue_dir <- file.path(output_data,"brt",paste0(genus,"_PA_bernuilli_Final2"),"predict_boost")
 
-# Load the first geometry from bpue_list (assuming all geometries have the same CRS)
-reference_geometry <- raster(bpue_list[1])
-print(reference_geometry)
-plot(reference_geometry)
-
-print(raster_stack[[8]])
-plot(raster_stack[[8]])
-print(raster_stack)
-
-# Ensure both stacks have the same dimensions and alignment
-# Vector to store the results of the comparison
-alignment_issues <- vector("list", length = nlayers(raster_stack))
-
-# Loop through all the rasters in the raster_stack
-for (i in 1:nlayers(raster_stack)) {
-  # Get the current raster from the stack
-  # i=1
-  raster_layer <- raster_stack[[i]]
-  
-  # Load the corresponding geometry from bpue_list
-  geometry <- raster(bpue_list[i])
-  
-  # Check if the raster and geometry are aligned (same CRS, extent, and resolution)
-  is_aligned <- compareRaster(raster_layer, raster(raster_layer), extent = TRUE, res = TRUE, crs = TRUE)
-  
-  # Store the result (TRUE or FALSE) and details if not aligned
-  if (!is_aligned) {
-    alignment_issues[[i]] <- list(raster = i, geometry = bpue_list[i])
-  }
-}
-
-# Summary of alignment checks
-alignment_problems <- Filter(Negate(is.null), alignment_issues)
-
-if (length(alignment_problems) > 0) {
-  # Print out the summary of the issues
-  print(paste(length(alignment_problems), "rasters are not aligned with their corresponding geometries:"))
-  for (issue in alignment_problems) {
-    print(paste("Raster", issue$raster, "with geometry", issue$geometry, "is not aligned."))
-  }
-} else {
-  print("All rasters are aligned with their corresponding geometries.")
-}
+# Build the matching BPUE filename from the same date, excluding interval maps and sidecar
+# files.
+bpue_list <- daily_files(bpue_dir,dates,function(day) {
+  file.path(format(day,"%Y/%m"),paste0("hurdle_X",format(day,"%Y%m%d"),"_",genus,"_brt_pred.tif"))
+})
 
 
-# 2.1. Add all hours trawled across all days to understand the total effort-----
-print(raster_stack[[8]])
-# Sum the cell values across all layers in the stack
-total_effort_raster <- calc(raster_stack, sum, na.rm = TRUE)
+# 2. Use the verified grid and depth from 6.2, without old bycatch dependencies ---
+# Read the reference raster to keep its exact cell size, cell positions and map extent.
+reference <- raster(FE_list[1])
 
-# Sum all cell values of the resulting raster to get the total fishing effort in hours
-total_fishing_effort <- cellStats(total_effort_raster, stat = 'sum', na.rm = TRUE)
+# Reuse the depth file prepared in 6.2 instead of loading any previous bycatch result.
+bathy_file <- file.path(study_dir,"study_bathymetry.tif")
 
-# Print the total fishing effort
-cat("Total fishing effort across all days:", total_fishing_effort, "hours\n")
-#Total fishing effort across all days: 372,187 hours
+# Read those aligned signed depths for assigning the original depth-specific parameters.
+bathy <- raster(bathy_file)
 
+# Stop if these grids differ; matching the number of cells alone would not be enough.
+compareRaster(reference,bathy,extent=TRUE,rowcol=TRUE,res=TRUE,orig=TRUE,crs=TRUE)
 
 
 # 3. Transform hours trawled per unit of areas to number of tows-------------------
 #tow_dur <- read.csv2("C:/Users/david/OneDrive/Escritorio/Survival/chondrichthyan_mortality/output/data_env_all.csv")
 #head(tow_dur)
 
-# Extract the first row for each unique tripID
+# Extract the first row for each tripID to describe the original trip parameters.
 #first_row_per_trip <- tow_dur[!duplicated(tow_dur$tripID), ]
 
-# View the resulting data frame
+# Inspect the resulting data frame.
 #head(first_row_per_trip)
 
 # 3.1. Tow duration-------------------------------------------------------------
@@ -194,7 +135,8 @@ cat("Total fishing effort across all days:", total_fishing_effort, "hours\n")
 #    "\nStandard Deviation (Overall):", SD_speed, "\n")
 # Overall mean: 2.884281+-0.3870117
 
-# Speed per metier:
+# Retain the original speed for each metier.
+# Retain the original mean speeds and convert knots to kilometres per hour using 1.852.
 speed_hake <- 3.191 * 1.852
 speed_norwaylobs <- 2.813 * 1.852
 speed_red <- 2.556 * 1.852
@@ -203,32 +145,32 @@ speed_red <- 2.556 * 1.852
 #net_opening <- read.csv2("input/Original/DatosCatalunyaECEME_Final.csv")
 #head(net_opening)
 
-# Create the new dataframe `net_op` with the first value of NetHorizontalOpening for each unique code
+# Take the first net-opening measurement for each original sampling code.
 #net_op <- net_opening %>%
 #  group_by(code) %>%                # Group by the 'code' column
 #  summarise(
 #    NetOpening = first(NetHorizontalOpenening),
 #   depth = first(depth))  # Get the first value
 
-# Merge both dataframes:
+# Bring both sources of net-opening measurements together.
 #head(net_op)  
 #head(first_row_per_trip)
 
-# Merge the two dataframes
-# Create the dataframe for net_op values
+# Combine the two tables of measurements.
+# Prepare the table of net-opening measurements.
 #net_op_part <- data.frame(
 #  ID = net_op$code,
 #  Net_Opening = net_op$NetOpening,
 #  depth = net_op$depth)
 
-# Create the dataframe for first_row_per_trip values
+# Prepare the table with the first measurement from each trip.
 #trip_part <- data.frame(
 #  ID = first_row_per_trip$tripID,
 #  Net_Opening = first_row_per_trip$Net_horizontal_opening,
 #  depth = first_row_per_trip$depth
 #)
 
-# Combine the two dataframes
+# Combine the two tables of measurements.
 #combined_df <- rbind(net_op_part, trip_part)
 #head(combined_df)
 
@@ -267,7 +209,8 @@ speed_red <- 2.556 * 1.852
 #    "\nStandard Deviation (Overall):", SD_net, "\n")
 # Overall mean: 24.12361 +- 8.490982
 
-# Horizontal net opening per metier in km:
+# Express the horizontal net opening for each metier in kilometres.
+# Retain the original net openings and convert metres to kilometres.
 opening_hake <- 21.046 / 1000
 opening_norwaylobs <- 26.868 / 1000
 opening_red <- 26.344 / 1000
@@ -275,249 +218,244 @@ opening_red <- 26.344 / 1000
 
 
 
-# 4. Add them to calculate BPUE per day in relation to fishing effort-----------
-# Parameters for each metier
-metiers <- list(
-  hake = list(opening = opening_hake, speed = speed_hake, depth_range = c(0, -199.99)),
-  norwaylobs = list(opening = opening_norwaylobs, speed = speed_norwaylobs, depth_range = c(-200, -499.99)),
-  red = list(opening = opening_red, speed = speed_red, depth_range = c(-500, -700))
-)
-print(metiers)
+# 4. Pair dates explicitly and integrate the original swept-area equation -------
+# Calculate hours x speed (km/hour) x net width (km) x BPUE (capsules/km2) to obtain capsules.
+# Keep the original depth classes and make their 200 m and 500 m boundaries meet without gaps.
+# Put the new GFW v4 results in their own folder, preserving the historical bycatch outputs.
+output_dir <- file.path(output_data,"brt/hurdle_stacks",genus,"total_bycatch/gfw_v4_2021")
 
-# Load bathymetry data
-bathy <- raster("input/gebco/Bathy.tif")
+# Keep the daily multi-layer bycatch files in this subfolder.
+processed_dir <- file.path(output_dir,"processed")
 
-# Filter the values between -20 and -700 and set values outside the range to NA
-bathy <- calc(bathy, function(x) {
-  x[x > -20 | x < -700] <- NA  # Set values outside the range to NA
-  return(x)
-})
+# Create the output folder if it does not already exist.
+dir.create(processed_dir,recursive=TRUE,showWarnings=FALSE)
 
-# resample:
-path <- paste0("output/", mod_code, "/hurdle_stacks/", genus, "/total_bycatch/sum/")
-output_file <- paste0(path, "aggregated_bycatch_map.tiff")
-totalbycatch_raster <- raster(output_file)
-print(totalbycatch_raster)
-bathy <- resample(bathy, totalbycatch_raster, method = "bilinear")
-print(bathy)
+# Reserve one coverage record per day so missing predictions cannot disappear from the report.
+audit_rows <- vector("list",length(dates))
 
-# Function to assign metier based on depth
-assign_metier <- function(depth) {
-  if (depth >= - 200) {
-    return("hake")
-  } else if (depth < - 200 & depth > - 500) {
-    return("norwaylobs")
-  } else {
-    return("red")
+# Reserve one daily results row for total catches and the three metiers.
+bycatch_rows <- vector("list",length(dates))
+
+# Create an empty raster on the same grid to accumulate the daily results.
+annual <- raster(reference)
+
+# Leave the annual raster empty until it is clear which cells have usable predictions.
+values(annual) <- NA_real_
+
+# Create a numeric accumulator for adding daily central catch estimates.
+annual_values <- rep(0,ncell(reference))
+
+# Track cells with at least one usable day so cells never estimated remain NA.
+annual_available <- rep(FALSE,ncell(reference))
+
+# Turn signed elevation into positive water depth to make the class boundaries easier to read.
+depth <- -getValues(bathy)
+
+# Assign 20-<200 m to hake, 200-<500 m to Norway lobster and 500-700 m to red shrimp.
+classes <- list(hake=is.finite(depth) & depth>=20 & depth<200,
+                norwaylobs=is.finite(depth) & depth>=200 & depth<500,
+                red=is.finite(depth) & depth>=500 & depth<=700)
+
+# Collect the unchanged speed parameters under the corresponding metier names.
+speeds <- c(hake=speed_hake,norwaylobs=speed_norwaylobs,red=speed_red)
+
+# Collect the unchanged net openings in the same named order.
+openings <- c(hake=opening_hake,norwaylobs=opening_norwaylobs,red=opening_red)
+
+for (i in seq_along(dates)) {
+
+  # Take the same calendar date for the effort, prediction and output below.
+  day <- dates[i]
+
+  # Select the effort raster for this date from the checked calendar.
+  effort_file <- FE_list[i]
+
+  # Recover its saved checksums before reading values for the calculation.
+  a <- readRDS(paste0(effort_file,".effort.rds"))
+
+  # Stop if either the effort raster or the depth file differs from the audited inputs.
+  if (!identical(a$method,"conservative_study_mask") ||
+      !identical(a$md5,unname(tools::md5sum(effort_file))) ||
+      !identical(a$depth_md5,unname(tools::md5sum(bathy_file)))) stop("Effort audit mismatch")
+
+  # Load fishing hours already restricted to the selected study cells.
+  fe <- raster(effort_file)
+
+  # Take the BPUE map for exactly the same day as the effort.
+  bpue_file <- bpue_list[i]
+
+  # Verify that BPUE is already in capsules/km2; do not undo the logarithm again.
+  check_prediction_scale(bpue_file,"capsules/km2")
+
+  # Load the corrected central hurdle prediction for this date.
+  bpue <- raster(bpue_file)
+
+  # Stop if these grids differ; matching the number of cells alone would not be enough.
+  compareRaster(reference,fe,bpue,extent=TRUE,rowcol=TRUE,res=TRUE,orig=TRUE,crs=TRUE)
+
+  # Read hours per cell and day as a vector for the swept-area calculation.
+  h <- getValues(fe)
+
+  # Read predicted capsules per km2 in the same cell order.
+  b <- getValues(bpue)
+
+  # Reject negative hours or predicted densities before multiplying them.
+  if (any(is.finite(h) & h<0) || any(is.finite(b) & b<0)) stop("Negative effort or BPUE")
+
+  # Identify cells where the effort map includes the study area; zero hours still count as
+  # valid.
+  in_study <- is.finite(h)
+
+  # Calculate catches only where both the study effort and a finite BPUE prediction exist.
+  available <- in_study & is.finite(b)
+
+  # Separately mark study cells without BPUE so their fishing hours are reported rather than
+  # treated as zero catch.
+  missing <- in_study & !is.finite(b)
+
+  # Retain the input BPUE and depth together with the calculated layers for inspection.
+  layers <- list(bpue_values=bpue,depth_values=bathy)
+
+  # Start with NA so locations without predictions cannot look like zero catches.
+  total <- rep(NA_real_,length(h))
+
+  # Start the catch sum at zero only in cells where the calculation is possible.
+  total[available] <- 0
+
+  # Begin a results row labelled with this date, rather than extract a date from a raster
+  # layer name.
+  row <- data.frame(date=format(day,"%Y%m%d"))
+
+  # Create all three metier layers even if one of them has no effort on this day.
+  for (metier in names(classes)) {
+
+    # Select the usable cells that belong to the current metier depth range.
+    included <- available & classes[[metier]]
+
+    # Keep swept area undefined outside cells where the calculation is available.
+    area <- rep(NA_real_,length(h))
+
+    # Start the metier area at zero in usable cells before adding this metier contribution.
+    area[available] <- 0
+
+    # Multiply hours by speed and net width: hours x km/hour x km gives swept km2.
+    area[included] <- h[included]*speeds[metier]*openings[metier]
+
+    # Multiply swept km2 by predicted capsules/km2 to obtain the expected number of capsules.
+    catch <- area*b
+
+    # Set this metier contribution to zero in usable cells belonging to a different depth
+    # class.
+    catch[available & !included] <- 0
+
+    # Put the swept areas back on the original grid without changing their cell positions.
+    r_area <- raster(reference); values(r_area) <- area
+
+    # Put the metier catches on that same grid.
+    r_catch <- raster(reference); values(r_catch) <- catch
+
+    # Retain the swept area layer for this metier in the daily output.
+    layers[[paste0("trawled_area_",metier)]] <- r_area
+
+    # Retain its catch layer separately, so the total remains traceable.
+    layers[[paste0("bycatch_",metier)]] <- r_catch
+
+    # Add this metier contribution to the daily catch total in usable cells.
+    total[available] <- total[available]+catch[available]
+
+    # Add the metier swept area across the usable cells for the daily table.
+    row[[paste0("trawled_area_",metier)]] <- sum(area,na.rm=TRUE)
+
+    # Add the corresponding expected catches for that same day.
+    row[[paste0("bycatch_",metier)]] <- sum(catch,na.rm=TRUE)
   }
+
+  # Create the total catch layer on the same reference grid.
+  r_total <- raster(reference); values(r_total) <- total
+
+  # Include the sum across all three metiers in the daily file.
+  layers$total_bycatch <- r_total
+
+  # Combine inputs, swept areas and catches into one daily raster stack.
+  daily_stack <- stack(layers)
+
+  # Name the layers explicitly so their contents are identifiable.
+  names(daily_stack) <- names(layers)
+
+  # Save the daily stack in double precision, separately from the older results.
+  writeRaster(daily_stack,file.path(processed_dir,paste0("total_bycatch_",format(day,"%Y%m%d"),".tif")),
+              overwrite=TRUE,datatype="FLT8S")
+  # Store the names separately because raster/GDAL may rename the saved GeoTIFF bands.
+  # Also save the layer names because some GeoTIFF readers replace them with numbered bands.
+  saveRDS(names(daily_stack),file.path(processed_dir,paste0("total_bycatch_",format(day,"%Y%m%d"),".tif.layers.rds")))
+
+  # Sum the estimated cells for this day; the coverage table records what could not be
+  # estimated.
+  row$total_bycatch <- sum(total,na.rm=TRUE)
+
+  # Retain this daily row for the final results table.
+  bycatch_rows[[i]] <- row
+
+  # Record study hours, integrated hours and hours lacking BPUE beside each daily result.
+  audit_rows[[i]] <- data.frame(date=day,study_hours=sum(h,na.rm=TRUE),
+      integrated_hours=sum(h[available]),hours_without_BPUE=sum(h[missing]),
+      cells_without_BPUE=sum(missing),bpue_md5=unname(tools::md5sum(bpue_file)))
+
+  # Add this day only where an estimate exists, without filling missing predictions with zero.
+  annual_values[available] <- annual_values[available]+total[available]
+
+  # Track cells with at least one usable day so cells never estimated remain NA.
+  annual_available <- annual_available | available
 }
 
-# Saving directory:
-path <- paste0("output/", mod_code, "/hurdle_stacks/", genus, "/total_bycatch/")
-if (!dir.exists(path)) dir.create(path , recursive = TRUE)
 
-# Preprocess the metiers to ensure numeric parameters
-metiers <- lapply(metiers, function(params) {
-  params$opening <- as.numeric(params$opening)
-  params$speed <- as.numeric(params$speed)
-  return(params)
-})
+# 5. Save central totals and coverage separately; do not sum daily CI widths -----
+# Join the individual daily results into one table.
+bycatchdata <- bind_rows(bycatch_rows)
 
+# Keep the original summary column names and order for easier comparison with previous runs.
+bycatchdata <- bycatchdata[c("date","total_bycatch","trawled_area_hake",
+   "trawled_area_norwaylobs","trawled_area_red","bycatch_hake","bycatch_norwaylobs","bycatch_red")]
 
-# Function to transform fishing effort to area units and calculate total bycatch:
-process_raster <- function(i) {
-  # i=8
-  FE_layer <- raster_stack[[i]]
-  #plot(FE_layer)
-  #print(FE_layer)
-  
-  raster_date <- substr(names(FE_layer), 19, 22) %>% 
-    paste0(substr(names(FE_layer), 24, 25)) %>% 
-    paste0(substr(names(FE_layer), 27, 28))
-  
-  bpue_file <- bpue_list[grep(raster_date, bpue_list)]
-  
-  if (length(bpue_file) == 1) {
-    print(paste("Processing BPUE file:", bpue_file))
-    bpue <- raster(bpue_file)
-    #plot(bpue)
-    #print(bpue)
-    
-    # Mask the raster to the exact shape of bpue_cleaned
-    FE_layer_mask <- raster::mask(FE_layer, bpue)
-    #plot(FE_layer_mask)
-    #print(FE_layer_mask)
-    
-    # Add depth values as a new layer in bpue
-    # Crop bathy to the extent of bpue
-    bathy <- resample(bathy, bpue, method = "bilinear")
-    bathy <- crop(bathy, extent(bpue))
-    #plot(bathy)
-    bpue_with_depth <- stack(bpue, bathy)
-    names(bpue_with_depth) <- c("bpue_values", "depth_values")
-    
-    # Initialize total bycatch and metier-specific columns
-    bpue_with_depth$total_bycatch <- 0
-    
-    # Process metiers
-    # metier_name <- names(metiers)[3]
-    for (metier_name in names(metiers)) {
-      params <- metiers[[metier_name]]
-      # Get depth values as a numeric vector
-      depth_values <- values(bpue_with_depth$depth_values)
-      # Create the logical mask based on depth values
-      metier_mask <- (depth_values < params$depth_range[1]) & (depth_values >= params$depth_range[2])
-      cat("Number of cells in the metier mask:", sum(metier_mask, na.rm = TRUE), "\n")
-      # Create a masked raster (set non-matching cells to NA)
-      depth_masked_raster <- bpue_with_depth$depth_values
-      values(depth_masked_raster)[!metier_mask] <- NA
-      #plot(depth_masked_raster, main = "Masked Depth Values")
+# Join the daily coverage records into a separate table.
+coverage <- bind_rows(audit_rows)
 
-      if (sum(metier_mask, na.rm = TRUE) > 0) {
-        # Extract fishing effort for the metier from FE_layer_mask
-        fishing_effort <- values(FE_layer_mask)
-        fishing_effort[!metier_mask] <- 0  # Zero out values outside the mask
-        fishing_effort[is.na(fishing_effort)] <- 0  # Replace NA with 0
-        
-        # Compute trawled area
-        trawled_area <- params$opening * params$speed * fishing_effort
+# Save daily central catches and swept areas, not confidence-interval widths.
+write.csv(bycatchdata,file.path(output_dir,"bycatch_summary.csv"),row.names=FALSE)
 
-        # Add the trawled area as a new raster layer
-        trawled_area_raster <- raster(bpue_with_depth)
-        values(trawled_area_raster) <- trawled_area
-        bpue_with_depth <- addLayer(bpue_with_depth, trawled_area_raster)
-        names(bpue_with_depth)[nlayers(bpue_with_depth)] <- paste0("trawled_area_", metier_name)
-        # bpue_with_depth
-        # plot(FE_layer_mask)
-        # plot(bpue_with_depth$trawled_area_hake)
-        # plot(bpue_with_depth$trawled_area_norwaylobs) 
-        # plot(bpue_with_depth$trawled_area_red) 
+# Save the coverage table so excluded effort is visible when interpreting the annual total.
+write.csv(coverage,file.path(output_dir,"bycatch_coverage_audit.csv"),row.names=FALSE)
 
-    # Calculate bycatch for the current metier
-    metier_bycatch <- trawled_area * values(bpue_with_depth$bpue_values)
-    
-    # Add bycatch_<metier> as a new layer
-    bycatch_layer <- raster(bpue_with_depth)
-    values(bycatch_layer) <- metier_bycatch
-    bpue_with_depth <- addLayer(bpue_with_depth, bycatch_layer)
-    names(bpue_with_depth)[nlayers(bpue_with_depth)] <- paste0("bycatch_", metier_name)
-    bpue_with_depth
-    
-    # Update total_bycatch layer
-    total_bycatch_layer <- bpue_with_depth$total_bycatch
-    values(total_bycatch_layer) <- values(total_bycatch_layer) + metier_bycatch
-    bpue_with_depth <- dropLayer(bpue_with_depth, which(names(bpue_with_depth) == "total_bycatch"))
-    bpue_with_depth <- addLayer(bpue_with_depth, total_bycatch_layer)
-    names(bpue_with_depth)[nlayers(bpue_with_depth)] <- "total_bycatch"
-    #plot(bpue_with_depth$total_bycatch)
-    #plot(bpue_with_depth$trawled_area_hake)
-    #plot(bpue_with_depth$bycatch_hake)
-    #plot(bpue_with_depth$total_bycatch)
-      }
-    }
-    
-    # Save the updated BPUE with depth and bycatch as a GeoTIFF file
-    path <- paste0("output/", mod_code, "/hurdle_stacks/", genus, "/total_bycatch/processed")
-    if (!dir.exists(path)) dir.create(path, recursive = TRUE)
-    output_file <- paste0("total_bycatch_", raster_date, ".tif")
-    #output_file <- paste0("total_bycatch_cir_", raster_date, ".tif")
-    writeRaster(bpue_with_depth, file.path(path, output_file), format = "GTiff", overwrite = TRUE)
-    
-    # Calculate total bycatch for this raster and update bycatchdata
-    total_bycatch_sum <- cellStats(bpue_with_depth$total_bycatch, stat = "sum", na.rm = TRUE)
-    # Calculate sums for trawled_area and bycatch for each metier
-    trawled_area_hake_sum <- cellStats(bpue_with_depth$trawled_area_hake, stat = "sum", na.rm = TRUE)
-    trawled_area_norwaylobs_sum <- cellStats(bpue_with_depth$trawled_area_norwaylobs, stat = "sum", na.rm = TRUE)
-    trawled_area_red_sum <- cellStats(bpue_with_depth$trawled_area_red, stat = "sum", na.rm = TRUE)
-    bycatch_hake_sum <- cellStats(bpue_with_depth$bycatch_hake, stat = "sum", na.rm = TRUE)
-    bycatch_norwaylobs_sum <- cellStats(bpue_with_depth$bycatch_norwaylobs, stat = "sum", na.rm = TRUE)
-    bycatch_red_sum <- cellStats(bpue_with_depth$bycatch_red, stat = "sum", na.rm = TRUE)
-    
-    # Append these results to the bycatchdata dataframe
-    bycatchdata <<- rbind(bycatchdata, data.frame(
-      date = raster_date,
-      total_bycatch = total_bycatch_sum,
-      trawled_area_hake = trawled_area_hake_sum,
-      trawled_area_norwaylobs = trawled_area_norwaylobs_sum,
-      trawled_area_red = trawled_area_red_sum,
-      bycatch_hake = bycatch_hake_sum,
-      bycatch_norwaylobs = bycatch_norwaylobs_sum,
-      bycatch_red = bycatch_red_sum
-    ))
-    print(paste("Processed and saved BPUE for date:", raster_date))
-  } else {
-    print(paste("No matching BPUE file for raster with date:", raster_date))
-  }
-}
+# Keep cells with no usable predictions on any day as NA in the annual map.
+annual_values[!annual_available] <- NA_real_
 
-# Sequential processing of raster layers
-bycatchdata <- data.frame(date = character(), total_bycatch = numeric(), stringsAsFactors = FALSE)  # Initialize bycatch data
-fishing_effort_values <- vector("list", length = length(raster_stack)) # Fishing effort vector
+# Leave the annual raster empty until it is clear which cells have usable predictions.
+values(annual) <- annual_values
 
-for (i in 1:nlayers(raster_stack)) {
-  process_raster(i)  # Call the function for each raster layer
-}
+# Create the output folder if it does not already exist.
+dir.create(file.path(output_dir,"sum"),showWarnings=FALSE)
 
-# Save the bycatch summary as a CSV
-head(bycatchdata)
-bycatch_csv_file <- file.path(path, "bycatch_summary_cir.csv")
-#bycatch_csv_file <- file.path(path, "bycatch_summary.csv")
-write.csv(bycatchdata, bycatch_csv_file, row.names = FALSE)
+# Save the sum of available daily catches per cell for later maps and PSA comparisons.
+writeRaster(annual,file.path(output_dir,"sum/aggregated_bycatch_map.tiff"),overwrite=TRUE,datatype="FLT8S")
 
+# Sum each numeric daily results column to obtain its annual central total.
+total_sums <- colSums(bycatchdata[,-1],na.rm=TRUE)
 
-    
-# 6. Overall egg case bycatch for 2021------------------------------------------
-path <- paste0("output/", mod_code, "/hurdle_stacks/", genus, "/total_bycatch/")
-bycatch_csv_file <- file.path(path, "bycatch_summary.csv")
-#bycatch_csv_file <- file.path(path, "bycatch_summary_cir.csv")
-bycatch <- read.csv(bycatch_csv_file)
-head(bycatch)
+# Save the annual catches and swept areas as a small table.
+write.csv(data.frame(quantity=names(total_sums),total=unname(total_sums)),
+          file.path(output_dir,"annual_totals.csv"),row.names=FALSE)
 
-# Calculate the total sum of total_bycatch
-total_bycatch_sum <- sum(bycatch$total_bycatch, na.rm = TRUE)
-print(total_bycatch_sum)
-# Total bycatch for 2021: 233,239 egg cases for Raja
-# Total bycatch for 2021: 228,935 egg cases for Scyliorhinus
-
-# Total 95% CI for 2021: 43,169 egg cases for Raja
-# Total 95% CI for 2021: 25,570 egg cases for Scyliorhinus
-# Exclude the date column and calculate the sum for all other columns
-total_sums <- colSums(bycatch[, -1], na.rm = TRUE)
+# Check that summing the annual catch map gives the same result as summing the daily table.
+if (abs(cellStats(annual,"sum")-sum(bycatchdata$total_bycatch))>1e-6) stop("Annual catch mismatch")
 print(total_sums)
 
-# Select the trawled area columns and calculate their total sum
-total_trawled_area <- sum(
-  total_sums["trawled_area_hake"],
-  total_sums["trawled_area_norwaylobs"],
-  total_sums["trawled_area_red"])
+# Print the effort that could not be integrated because BPUE was missing.
+message("Study hours without BPUE: ",sum(coverage$hours_without_BPUE))
 
-# Print the total trawled area
-print(total_trawled_area)
+# Report central estimates for the cells with model coverage; do not label these as annual CI
+# bounds.
+# Do not use the former data-frame resampling, because it did not propagate model uncertainty.
+# Leave annual uncertainty for a separately agreed calculation rather than invent an interval
+# here.
 
-#95% CI Raja:
-#total_bycatch       trawled_area_hake trawled_area_norwaylobs        trawled_area_red            bycatch_hake 
-#43169.482               22980.475                8070.905                2402.344               26085.388 
-#bycatch_norwaylobs             bycatch_red 
-#12962.913                4121.181
 
-#95% CI Scyliorhinus:
-#total_bycatch       trawled_area_hake trawled_area_norwaylobs        trawled_area_red            bycatch_hake 
-#25569.899               23396.891                7327.269                2698.409               15766.427 
-#bycatch_norwaylobs             bycatch_red 
-#6621.830                3181.642 
-
-#6. Bootstrap total bycatch-----------------------------------------------------
-
-#6.1. Make  a simulation--------------------------------------------------------
-# Bootstrap Sampling
-n_sim <- 1000  # Number of bootstrap iterations
-bootstrap_results <- replicate(n_sim, {
-  # Randomly sample with replacement
-  sampled_bycatch <- sample(bycatch, size = length(bycatch), replace = TRUE)
-  # Calculate total bycatch for the sampled population
-  sum(sampled_bycatch, na.rm = TRUE)
-})
-
-# Calculate 95% Confidence Interval
-ci_95 <- quantile(bootstrap_results, probs = c(0.025, 0.975))
-cat("95% Confidence Interval for Total Bycatch:", ci_95, "\n")
