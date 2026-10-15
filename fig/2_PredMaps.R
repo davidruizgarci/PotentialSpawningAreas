@@ -18,8 +18,8 @@ season <- "2021" #2021, spring, winter, summer, fall
 
 # Raja
 genus <- "Raja" 
-family <- "LN_gaussian_Final2" 
-type <- "_NKm2" 
+family <- "bernuilli_Final2" 
+type <- "_PA" 
 mod_code <- "brt"
 dataset <- "ALL" 
 
@@ -88,7 +88,7 @@ print(GSA_filtered)
 
 
 # 1.5. Predicted habitat--------------------------------------------------------
-path <- paste0("output/", mod_code, "/", paste0(genus, type, "_", family), "/predict_boost/2021/", season, "_hurdle_pred_median.tif")
+path <- paste0("output/", mod_code, "/", paste0(genus, type, "_", family), "/predict_boost/2021/", season, "2_hurdle_pred_median.tif")
 #path <- paste0("output/", mod_code, "/", paste0(genus, type, "_", family), "/predict_boost/2021/01/20210101_Scyliorhinus_brt_pred.tif")
 habitat <- raster(path)
 #habitat <- calc(habitat, function(x) 10^x)
@@ -152,8 +152,8 @@ habitat_clipped_df <- as.data.frame(habitat_clipped_sf) %>%
 habitat_clipped_df <- habitat_clipped_df %>%
   filter(!is.na(habitat))
 
-# Revert the log1p() of the response variable
-habitat_clipped_df$habitat <- expm1(habitat_clipped_df$habitat)
+# Regenerated maps already contain capsules/km2 after training-residual smearing.
+# Keep these values unchanged; expm1 here would apply the inverse twice.
 
 # Verify the result
 summary(habitat_clipped_df)
@@ -181,7 +181,7 @@ percentile_90 <- quantile(habitat_clipped_df$habitat, probs = 0.9, na.rm = TRUE)
 p <- ggplot() +
   # Plot habitat raster
   geom_tile(data = habitat_clipped_df, aes(x = x, y = y, fill = habitat)) +
-  scale_fill_viridis_c(option = "viridis", name = "Ln(density) N/km2") +
+  scale_fill_viridis_c(option = "viridis", name = "Density (capsules/km²)") +
   
   # Plot land mask
   geom_sf(data = mask, fill = "grey80", color = "grey60") +
@@ -223,7 +223,7 @@ p
 # export plot
 outdir <- paste0(output_data, "/fig/Map/", paste0(genus, type, "_", family))
 if (!dir.exists(outdir)) dir.create(outdir, recursive = TRUE)
-p_png <- paste0(outdir, "/", season, "_", mod_code, "_", paste0(genus, type, "_", family), "PSA_hurdle_habitat_Map_vars.png")
+p_png <- paste0(outdir, "/", season, "_", mod_code, "_", paste0(genus, type, "_", family), "PSA2_hurdle_habitat_Map_vars.png")
 ggsave(p_png, p, width=20, height=20, units="cm", dpi=1800)
 
 
@@ -235,7 +235,7 @@ crs(habitat_raster) <- st_crs(habitat_raster)$proj4string
 plot(habitat_raster)
 
 #Save it:
-output_path <- paste0("output/shapefiles/", genus, "/", season, "_", genus,  "_hurdle_habitat_raster.tif")  # Windows with double backslashes
+output_path <- paste0("output/shapefiles/", genus, "/", season, "2_", genus,  "_hurdle_habitat_raster.tif")  # Windows with double backslashes
 writeRaster(habitat_raster, filename = output_path, format = "GTiff", overwrite = TRUE)
 
 # Set the CRS to WGS 84 (EPSG:4326)
@@ -332,7 +332,7 @@ crs(raster_output) <- st_crs(raster_output)$proj4string
 plot(raster_output)
 
 #Save it:
-output_path <- paste0("output/shapefiles/", genus, "/", season, "_", genus, "_hurdle_MASK_habitat_raster.tif")  # Windows with double backslashes
+output_path <- paste0("output/shapefiles/", genus, "/", season, "2_", genus, "_hurdle_MASK_habitat_raster.tif")  # Windows with double backslashes
 writeRaster(raster_output, filename = output_path, format = "GTiff", overwrite = TRUE)
 
 
@@ -386,7 +386,7 @@ plot(st_geometry(p_smooth_chaikin))
 
 
 # Step 5: Save the filtered polygons as a shapefile
-output_shapefile <- paste0("output/shapefiles/", season, "_", genus, "_ksmooth_hurdle_contour_90_percentile_filtered.shp")
+output_shapefile <- paste0("output/shapefiles/", season, "2_", genus, "_ksmooth_hurdle_contour_90_percentile_filtered.shp")
 if (!dir.exists(dirname(output_shapefile))) dir.create(dirname(output_shapefile), recursive = TRUE)
 st_write(smoothed_boundary, output_shapefile, append = FALSE)
 
@@ -396,7 +396,7 @@ st_write(smoothed_boundary, output_shapefile, append = FALSE)
 p <- ggplot() +
   # Plot habitat raster
   geom_tile(data = habitat_clipped_df, aes(x = x, y = y, fill = habitat)) +
-  scale_fill_viridis_c(option = "viridis", name = "Ln(density) N/km2") +
+  scale_fill_viridis_c(option = "viridis", name = "Density (capsules/km²)") +
   
   # Plot land mask
   geom_sf(data = mask, fill = "grey80", color = "grey60") +
@@ -434,17 +434,17 @@ p
 # export plot
 outdir <- paste0(output_data, "/fig/Map/", paste0(genus, type, "_", family))
 if (!dir.exists(outdir)) dir.create(outdir, recursive = TRUE)
-p_png <- paste0(outdir, "/", season, "_", mod_code, "_", paste0(genus, type, "_", family), "PSA_hurdle_habitat_Map_vars.png")
+p_png <- paste0(outdir, "/", season, "2_", mod_code, "_", paste0(genus, type, "_", family), "PSA_hurdle_habitat_Map_vars.png")
 ggsave(p_png, p, width=20, height=20, units="cm", dpi=1800)
 
 # save dataframe:
-write.csv2(habitat_clipped_df, paste0("output/fig/Map/", genus, type, "_", family, "/", season, ".csv"), row.names = FALSE)
+write.csv2(habitat_clipped_df, paste0("output/fig/Map/", genus, type, "_", family, "/", season, "2.csv"), row.names = FALSE)
 
 
 # 9. Load error map ------------------------------------------------------------
-# 8.1. 95 CI map
+# 8.1. Median daily interval width map
 
-path <- paste0("output/", mod_code, "/", paste0(genus, type, "_", family), "/predict_boost/2021/", season, "hurdle_pred_CIR_median.tif")
+path <- paste0("output/", mod_code, "/", paste0(genus, type, "_", family), "/predict_boost/2021/", season, "2_hurdle_pred_CIR_median.tif")
 error <- raster(path)
 #error <- calc(error, expm1)
 print(error)
@@ -502,15 +502,16 @@ error_clipped_df <- as.data.frame(error_clipped_sf) %>%
 error_clipped_df <- error_clipped_df %>%
   filter(!is.na(error))
 
-# Revert the log1p() of the response variable
-error_clipped_df$error <- expm1(error_clipped_df$error)
+# A confidence-interval width must never be retransformed with expm1.
+# Daily widths use the approved independent cross-product approximation.
+# Their temporal median is not a confidence interval for the seasonal median.
 
 # Verify the result
 summary(error_clipped_df)
 
 
 
-# 5. Make 95% CI zoomed in map---------------------------------------------------------
+# 5. Make the median daily interval width map---------------------------------------------------------
 #colors <- c("#FFFFB2", "#FECC5C", "#FD8D3C", "#F03B20", "#BD0026", "#000000")
 colors <- c("#FFFFB2", "#FECC5C", "#FDBF6F", "#F03B20", "#BD0026", "#8B0000")
 # Create a function to generate a color palette
@@ -524,7 +525,7 @@ gradient_colors <- color_palette(num_colors)
 p <- ggplot() +
   # Plot error raster
   geom_tile(data = error_clipped_df, aes(x = x, y = y, fill = error)) +
-  scale_fill_gradientn(colors = gradient_colors, name = "95% CI") +
+  scale_fill_gradientn(colors = gradient_colors, name = "Median daily interval width (capsules/km²)") +
   
   # Plot land mask
   geom_sf(data = mask, fill = "grey80") +
@@ -558,7 +559,7 @@ p
 # export plot
 outdir <- paste0(output_data, "/fig/Map/", paste0(genus, type, "_", family))
 if (!dir.exists(outdir)) dir.create(outdir, recursive = TRUE)
-p_png <- paste0(outdir, "/hurdle_EXP_CIR_Map_scale_vars.png")
+p_png <- paste0(outdir, "/hurdle_EXP_CIR_Map_scale_vars2.png")
 ggsave(p_png, p, width=20, height=20, units="cm", dpi=1800)
 
 
@@ -657,12 +658,12 @@ g2 <- g +
   geom_raster(data = habitat_clipped_df, aes(x = x, y = y, fill = habitat)) +
   
   # Add the appropriate color scale for habitat
-  scale_fill_viridis_c(option = "viridis", name = "density (N/km2)") +
+  scale_fill_viridis_c(option = "viridis", name = "Density (capsules/km²)") +
   
   # Add other layers (mask, GSA, contours, etc.)
   geom_sf(data = GSA_filtered, fill = NA, color = "black", size = 0.8, linetype = "dashed") +
   geom_contour(data = habitat_clipped_df, aes(x = x, y = y, z = habitat), 
-               breaks = percentile_75, color = "white", size = 0.4) +
+               breaks = percentile_90, color = "white", size = 0.4) +
   
   #Set the zoom level using the bounding box limits
 coord_sf(xlim = c(bbox["xmin"], bbox["xmax"]), 
@@ -854,3 +855,4 @@ ggsave(p_png, g2, width=17, height=17, units="cm", dpi=300)
 #p_png <- paste0(outdir, "/", mod_code, "_", paste0(genus, type, "_", family), "_SE_Map_scale_vars.png")
 #ggsave(p_png, p, width=15, height=22, units="cm", dpi=1200)
 #
+

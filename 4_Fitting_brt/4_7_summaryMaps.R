@@ -16,8 +16,8 @@ bootstrap <- T
 
 # Raja
 genus <- "Raja" 
-family <- "LN_gaussian_Final2" 
-type <- "_NKm2" 
+family <- "bernuilli_Final2" 
+type <- "_PA" 
 mod_code <- "brt"
 dataset <- "ALL" 
 
@@ -27,6 +27,12 @@ dataset <- "ALL"
 #type <- "_PA" 
 #mod_code <- "brt"
 #dataset <- "ALL" 
+
+
+# Combined hurdle outputs are saved in the occurrence model folder for both genera.
+# Select the genus above; retain family = "bernuilli_Final2" and type = "_PA".
+if (!exists("code_dir")) stop("Run the local 0_setup.R first")
+source(file.path(code_dir, "fun", "training_smearing.R"))
 
 
 # 1. Set data repository--------------------------------------------------------
@@ -96,12 +102,12 @@ head(fall_df)
 
 
 
-# 2. Merge HABITAT maps to create seasonal means----------------------------------------
+# 2. Summarize daily habitat maps using the original temporal median----------------------------------------
 
 # Prepare your date list and other necessary variables
-dates <- fall_df #spring_df, winter_df, summer_df, fall_df
+dates <- year_df #spring_df, winter_df, summer_df, fall_df, year_df
 stack_list <- vector("list", nrow(dates))  # Pre-allocate list
-season <- "fall" #2021, spring, winter, summer, autumn
+season <- "2021" #2021, spring, winter, summer, autumn
 
 
 # Loop through each date
@@ -115,7 +121,7 @@ for (i in 1:nrow(dates)) {
   DD <- sprintf("%02d", day(date))
   
   # Construct the file pattern
-  pat <- paste0("hurdle_X", format(date, "%Y%m%d"), "_", genus, "_", mod_code, "_pred.tif")
+  pat <- paste0("^hurdle_X", format(date, "%Y%m%d"), "_", genus, "_", mod_code, "_pred\\.tif$")
   
   # Construct the path to the directory containing TIFF files
   stack_repo <- paste0("output/", mod_code, "/", paste0(genus, type, "_", family), "/predict_boost/2021/", MM)
@@ -130,6 +136,10 @@ for (i in 1:nrow(dates)) {
   
   # Debugging print
   print(paste("Found TIFF files:", length(tiffile)))
+
+  # Fail rather than silently omit dates or read metadata as raster layers.
+  if (length(tiffile) != 1L) stop("Expected exactly one daily hurdle map for ", date)
+  check_prediction_scale(tiffile, "capsules/km2")
   
   if (length(tiffile) > 0) {
     s <- tryCatch({
@@ -161,8 +171,8 @@ pred_med <- raster::calc(pred_stack, fun = median)
 beep()
 
 # Define output paths
-tifffile <- paste0("output/", mod_code, "/", paste0(genus, type, "_", family), "/predict_boost/2021/", season, "_hurdle_pred_median.tif")
-pngfile <- paste0("output/", mod_code, "/", paste0(genus, type, "_", family), "/predict_boost/2021/", season, "_hurdle_pred_median.png")
+tifffile <- paste0("output/", mod_code, "/", paste0(genus, type, "_", family), "/predict_boost/2021/", season, "2_hurdle_pred_median.tif")
+pngfile <- paste0("output/", mod_code, "/", paste0(genus, type, "_", family), "/predict_boost/2021/", season, "2_hurdle_pred_median.png")
 
 # Save the median raster as TIFF
 writeRaster(pred_med, filename = tifffile, format = "GTiff", overwrite = TRUE)
@@ -181,11 +191,16 @@ dev.off()
 
 
 
-# 3. Merge 95% CI maps to create seasonal means----------------------------------------
+# 3. Summarize daily interval widths using the original temporal median----------------------------------------
 # Prepare your date list and other necessary variables
 #dates <- year_df #spring_df, winter_df, summer_df, autumn_df
 #stack_list <- vector("list", nrow(dates))  # Pre-allocate list
 #season <- "2021"
+
+
+# Keep daily uncertainty separate from the habitat list read above.
+# This is the median daily interval width, NOT a CI for the seasonal median.
+stack_list <- vector("list", nrow(dates))
 
 
 # Loop through each date
@@ -199,7 +214,7 @@ for (i in 1:nrow(dates)) {
   DD <- sprintf("%02d", day(date))
   
   # Construct the file pattern
-  pat <- paste0("hurdle_X", format(date, "%Y%m%d"), "_", genus, "_", mod_code, "_pred_cir.tif")
+  pat <- paste0("^hurdle_X", format(date, "%Y%m%d"), "_", genus, "_", mod_code, "_pred_cir\\.tif$")
   
   # Construct the path to the directory containing TIFF files
   stack_repo <- paste0("output/", mod_code, "/", paste0(genus, type, "_", family), "/predict_boost/2021/", MM)
@@ -214,6 +229,15 @@ for (i in 1:nrow(dates)) {
   
   # Debugging print
   print(paste("Found TIFF files:", length(tiffile)))
+
+  # Fail rather than silently omit dates or read metadata as raster layers.
+  if (length(tiffile) != 1L) stop("Expected exactly one daily hurdle map for ", date)
+  check_prediction_scale(tiffile, "capsules/km2")
+  # Only accept widths produced by the agreed independent cross-product method.
+  audit <- readRDS(paste0(tiffile, ".joint.rds"))
+  if (!identical(audit$method, "independent_cross_products")) {
+    stop("Regenerate joint uncertainty for ", date)
+  }
   
   if (length(tiffile) > 0) {
     s <- tryCatch({
@@ -245,8 +269,8 @@ pred_med <- raster::calc(pred_stack, fun = median)
 beep()
 
 # Define output paths
-tifffile <- paste0("output/", mod_code, "/", paste0(genus, type, "_", family), "/predict_boost/2021/", season, "_hurdle_pred_CIR_median.tif")
-pngfile <- paste0("output/", mod_code, "/", paste0(genus, type, "_", family), "/predict_boost/2021/", season, "_hurdle_pred_CIR_median.png")
+tifffile <- paste0("output/", mod_code, "/", paste0(genus, type, "_", family), "/predict_boost/2021/", season, "2_hurdle_pred_CIR_median.tif")
+pngfile <- paste0("output/", mod_code, "/", paste0(genus, type, "_", family), "/predict_boost/2021/", season, "2_hurdle_pred_CIR_median.png")
 
 # Save the median raster as TIFF
 writeRaster(pred_med, filename = tifffile, format = "GTiff", overwrite = TRUE)
