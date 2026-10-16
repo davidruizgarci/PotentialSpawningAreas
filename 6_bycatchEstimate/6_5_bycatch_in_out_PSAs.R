@@ -101,14 +101,14 @@ total_bycatch_overall <- cellStats(bycatch_sum, sum, na.rm = TRUE)
 
 # Print results
 print(paste("Total Bycatch Within PSAs:", total_bycatch_in_PSA))
-#Raja: 97,847 (42.0%)
-#Scyliorhinus: 19,052 (8.3%)
+#Raja: 97,847 (42.0%), v2: 97847.0464220047
+#Scyliorhinus: 19,052 (8.3%), v2:
 print(paste("Total Bycatch Outside PSAs:", total_bycatch_outside_PSA))
-#Raja: 135,392 (58.0%)
-#Scyliorhinus: 209,883
+#Raja: 135,392 (58.0%), v2: 135391.816555262
+#Scyliorhinus: 209,883, v2:
 print(paste("Total Bycatch Overall:", total_bycatch_overall))
-# Raja: 233,239
-# Scyliorhinus: 228,935
+# Raja: 233,239, v2: 233238.862977266
+# Scyliorhinus: 228,935, v2:
 
 
 # Check if the total sum matches the original 233,239 egg cases
@@ -118,5 +118,5 @@ if (round(total_bycatch_in_PSA + total_bycatch_outside_PSA, 2) == round(total_by
   print("❌ Sum mismatch! Check alignment and missing values.")
 }
 
-# Total bycatch for 2021: 233,239 egg cases for Raja
-# Total bycatch for 2021: 228,935 egg cases for Scyliorhinus
+# Total bycatch for 2021: 233,239 egg cases for Raja #v2: 233238.862977266
+# Total bycatch for 2021: 228,935 egg cases for Scyliorhinus #v2:
